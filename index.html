@@ -343,7 +343,7 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='1.6（2026-08-23）';
+const APP_VERSION='1.7（2026-08-23）';
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
 const SAMPLE={
@@ -1143,8 +1143,16 @@ function openSettings(){
     </div>
     <input type="file" id="impF" accept="application/json,.json" class="hidden" onchange="impJSON(this)">
     <button class="btn line" style="width:100%;margin-top:20px;justify-content:center" onclick="resetAll()"><i data-lucide="trash-2"></i>データをすべて消す</button>
-    <button class="btn line" style="width:100%;margin-top:10px;justify-content:center" onclick="manualUpdateCheck()"><i data-lucide="refresh-cw"></i>アプリの更新を確認</button>
-    <div class="muted" style="text-align:center;margin-top:14px">ふたりのおうち　バージョン ${APP_VERSION}<br><span style="font-size:10px">更新したのに変わらないときは、画面を下に引っぱって再読み込みしてください</span></div>`);
+    <h3 style="margin-top:26px"><i data-lucide="refresh-cw"></i>アプリの更新</h3>
+    <div class="help" style="margin-bottom:12px">
+      いま使っているバージョン：<b>${APP_VERSION}</b><br>
+      新しいバージョンが公開されると、画面の上に自動でお知らせが出ます。
+      出ないときや、ホーム画面のアプリが古いままのときは、下のボタンを押してください。
+    </div>
+    <button class="btn ghost" style="width:100%;justify-content:center" onclick="forceUpdate()"><i data-lucide="refresh-cw"></i>アプリを最新に更新する</button>
+    <div class="muted" style="text-align:center;margin-top:10px;font-size:11px">
+      更新してもデータ・同期キーはそのまま残ります</div>
+    <div class="muted" style="text-align:center;margin-top:18px">ふたりのおうち　バージョン ${APP_VERSION}</div>`);
 }
 function setSave(){
   S.settings=Object.assign({},S.settings,{anniversary:val('sAnv'),updatedAt:Date.now(),lastModifiedBy:ME});
@@ -1176,11 +1184,12 @@ function cloudSave(){
 }
 function cloudOff(){ Cloud.setConf(null); Cloud.stop(); closeSheet(); toast('この端末だけで保存する設定にしました'); }
 function cloudReset(){ Cloud.setConf(undefined); Cloud.stop(); closeSheet(); toast('初期設定に戻しました'); Cloud.init(); }
-async function manualUpdateCheck(){
-  if(location.protocol==='file:'){ toast('サーバーに置いた状態でご利用ください'); return; }
-  toast('確認しています…'); lastUpdCheck=Date.now(); newVer=''; await checkUpdate();
-  if(newVer){ closeSheet(); toast('新しいバージョンがあります'); }
-  else toast('最新の状態です ✅');
+/* 押せば必ず最新版を取り直して読み込み直す（ホーム画面アプリ用の手動更新） */
+async function forceUpdate(){
+  if(location.protocol==='file:'){ toast('サーバーに置いた状態でお使いください'); return; }
+  toast('最新の状態を取得しています…');
+  try{ await fetch(location.pathname,{cache:'reload'}); }catch(e){ toast('通信できませんでした'); return; }
+  setTimeout(()=>location.reload(),400);
 }
 function manualSync(){
   if(!Cloud.ready){ toast('まだ接続できていません。通信環境を確認してね'); return; }
