@@ -66,7 +66,17 @@ i[data-lucide="receipt-text"]:empty:before{content:"🧾"} i[data-lucide="heart-
 .lg-hint{margin-top:22px;font-size:12px;color:var(--sub)}
 
 /* ---------- SHELL ---------- */
-.topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:6px;
+.head{position:sticky;top:0;z-index:40}
+.syncbar{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;
+  border-bottom:1px solid rgba(0,0,0,.06);animation:slidein .25s ease}
+@keyframes slidein{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.syncbar.bad{background:#FFE0DB;color:#A83A2C}
+.syncbar.warn{background:#FFF0D2;color:#835E12}
+.syncbar .ic{font-size:17px;flex-shrink:0;line-height:1}
+.syncbar b{display:block;font-weight:800;font-size:12.5px;line-height:1.35}
+.syncbar em{font-style:normal;display:block;font-size:11px;opacity:.85;line-height:1.4}
+.syncbar .go{margin-left:auto;font-size:11px;font-weight:800;white-space:nowrap;opacity:.75}
+.topbar{position:relative;z-index:40;display:flex;align-items:center;gap:6px;
   padding:calc(env(safe-area-inset-top) + 10px) 12px 10px;background:color-mix(in srgb,var(--bg) 88%,transparent);
   backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
 .brand{font-weight:800;font-size:14px;margin-right:auto;display:flex;align-items:center;gap:4px;
@@ -283,12 +293,15 @@ code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:11px;word-
 </div>
 
 <div id="app" class="hidden">
+  <div class="head">
   <header class="topbar">
     <div class="brand">🏠<b>ふたりのおうち</b></div>
     <div id="whoBadge" class="who"></div>
     <button class="icobtn" onclick="openSettings()"><i data-lucide="settings"></i><span class="cloud-dot" id="cloudDot"></span></button>
     <button class="icobtn" onclick="logout()"><i data-lucide="log-out"></i></button>
   </header>
+  <div id="syncBar" class="hidden" onclick="openSettings()"></div>
+  </div>
   <main>
     <section id="view-home"  class="view active"></section>
     <section id="view-money" class="view"></section>
@@ -322,7 +335,7 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='1.2（2026-08-23）';
+const APP_VERSION='1.4（2026-08-23）';
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
 const SAMPLE={
@@ -449,7 +462,9 @@ const Cloud={
   setConf(c){ if(c===null)localStorage.setItem(LS_CLOUD,JSON.stringify({off:true}));
     else if(c===undefined)localStorage.removeItem(LS_CLOUD);
     else localStorage.setItem(LS_CLOUD,JSON.stringify(c)); },
-  dot(){ const d=$('#cloudDot'); if(!d)return; d.className='cloud-dot'+(this.status==='on'?' on':this.status==='err'?' err':''); },
+  dot(){ const d=$('#cloudDot');
+    if(d)d.className='cloud-dot'+(this.status==='on'?' on':this.status==='err'?' err':'');
+    updateSyncBar(); },
   async init(){
     const c=this.conf(); if(!c||!c.config||!c.room){ this.status='off'; this.dot(); return; }
     this.status='wait'; this.dot();
@@ -518,7 +533,8 @@ function tryLogin(){
     setTimeout(()=>{$('.lg-card').classList.remove('shake');buf='';drawDots();},420);
   }
 }
-function logout(){ localStorage.removeItem(LS_USER); Cloud.stop(); ME=null; $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
+function logout(){ localStorage.removeItem(LS_USER); Cloud.stop(); ME=null;
+  clearInterval(window._sbT); const sb=document.getElementById('syncBar'); if(sb){sb.className='hidden';sb.innerHTML='';} $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
 function boot(id){
   ME=id; const _raw=loadLocal(); freshInstall=!_raw; S=ensure(_raw); saveLocal();
   const u=USERS[id];
@@ -526,7 +542,34 @@ function boot(id){
   $('#whoBadge').innerHTML=`${u.emoji} ${u.name}として操作中`;
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
   ui.month=todayY().slice(0,7); ui.calCur=todayY().slice(0,7); ui.calSel=todayY();
-  render(); Cloud.init(); setTimeout(offerSampleCleanup,900);
+  bootAt=Date.now(); render(); Cloud.init(); setTimeout(offerSampleCleanup,900);
+  clearInterval(window._sbT); window._sbT=setInterval(updateSyncBar,4000);
+}
+
+/* ---------- 同期状態のバナー ---------- */
+let bootAt=Date.now();
+function syncState(){
+  if(Cloud.conf())return Cloud.status;
+  let c=null; try{c=JSON.parse(localStorage.getItem(LS_CLOUD)||'null')}catch(e){}
+  return (c&&c.off)?'disabled':'nokey';
+}
+function updateSyncBar(){
+  const el=document.getElementById('syncBar'); if(!el||!ME)return;
+  const st=syncState();
+  const hide=()=>{ el.className='hidden'; el.innerHTML=''; };
+  if(st==='on')return hide();
+  let cls='warn',ic='☁️',t='',sub='';
+  if(st==='nokey'){ cls='bad'; ic='🔌'; t='相手と同期されていません';
+    sub='いまは この端末だけ に保存されています'; }
+  else if(st==='disabled'){ cls='bad'; ic='🔌'; t='同期をオフにしています';
+    sub='いまは この端末だけ に保存されています'; }
+  else if(st==='err'){ ic='📴'; t='オフラインです';
+    sub='この端末に保存中。つながり次第、自動で同期します'; }
+  else { /* 接続中 */
+    if(Date.now()-bootAt<5000)return hide();
+    ic='⏳'; t='同期サーバーに接続中…'; sub='しばらく変わらないときはタップして確認してください'; }
+  el.className='syncbar '+cls;
+  el.innerHTML=`<span class="ic">${ic}</span><div><b>${t}</b><em>${sub}</em></div><span class="go">確認 ›</span>`;
 }
 
 /* ---------- サンプルデータの掃除（v1.0 からの移行用） ---------- */
@@ -592,7 +635,7 @@ function render(){
   document.querySelectorAll('#tabbar button').forEach(b=>b.classList.toggle('on',b.dataset.t===ui.tab));
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+ui.tab));
   ({home:renderHome,money:renderMoney,cal:renderCal,chore:renderChore,wish:renderWish,rule:renderRule}[ui.tab])();
-  icons();
+  updateSyncBar(); icons();
 }
 
 /* ============================ HOME ============================ */
@@ -1030,7 +1073,9 @@ function openSettings(){
       <b>⚠️ まだ同期キーがありません</b><br>
       この端末は、いまこの端末だけにデータを保存しています。
       もう一方の端末とつなぐには、<b>末尾に <code>#k=…</code> が付いたリンク</b>を開くか、
-      下の詳細設定に同期キーを貼り付けてください。</div>`}
+      下の詳細設定に同期キーを貼り付けて「保存して接続」を押してください。<br>
+      <span style="font-size:11px">※ホーム画面から起動したときにこの表示が出る場合は、
+      鍵つきリンクでホーム画面に追加し直すか、キーを貼り付けてください。</span></div>`}
     <details style="margin-top:10px">
       <summary class="muted" style="cursor:pointer;padding:8px 0;font-weight:700">詳細設定（ふだんは触らなくて大丈夫）</summary>
       <label class="f" style="margin-top:10px"><span>同期キー（ふたり共通・秘密）</span>
@@ -1130,12 +1175,20 @@ document.getElementById('tabbar').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(b)go(b.dataset.t);
 });
 /* URL末尾の #k=… から同期キーを受け取り、履歴に残らないよう消す */
+function isStandalone(){
+  return !!(window.navigator.standalone||(window.matchMedia&&matchMedia('(display-mode: standalone)').matches));
+}
 function takeKeyFromHash(){
   const m=location.hash.match(/[#&]k=([A-Za-z0-9_.\-]+)/);
   if(!m||!m[1])return false;
   const cur=localStorage.getItem(LS_ROOM);
-  try{ localStorage.setItem(LS_ROOM,m[1]);
-    history.replaceState(null,'',location.pathname+location.search); }catch(e){}
+  try{
+    localStorage.setItem(LS_ROOM,m[1]);
+    /* ホーム画面アプリとして起動しているときだけURLを整える。
+       ブラウザ上では鍵を残す ← この状態で「ホーム画面に追加」すると鍵ごと登録されるため、
+       ホーム画面アプリ側の保存領域が別でも、起動しただけで同期がつながる */
+    if(isStandalone()) history.replaceState(null,'',location.pathname+location.search);
+  }catch(e){}
   return cur!==m[1];
 }
 takeKeyFromHash();
