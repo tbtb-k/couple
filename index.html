@@ -71,6 +71,7 @@ i[data-lucide="receipt-text"]:empty:before{content:"🧾"} i[data-lucide="heart-
   border-bottom:1px solid rgba(0,0,0,.06);animation:slidein .25s ease}
 @keyframes slidein{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 .syncbar.bad{background:#FFE0DB;color:#A83A2C}
+.syncbar.new{background:#DDF0E7;color:#1D6B51}
 .syncbar.warn{background:#FFF0D2;color:#835E12}
 .syncbar .ic{font-size:17px;flex-shrink:0;line-height:1}
 .syncbar b{display:block;font-weight:800;font-size:12.5px;line-height:1.35}
@@ -115,8 +116,7 @@ main{padding:14px 14px calc(96px + env(safe-area-inset-bottom));max-width:620px;
 .btn.sm{padding:7px 12px;font-size:12px}
 .btn.ghost{background:var(--card);color:var(--ink);box-shadow:var(--sh)}
 .btn.line{background:transparent;color:var(--sub);box-shadow:none;border:1px solid var(--line)}
-.chips{display:flex;gap:7px;overflow-x:auto;padding:2px 2px 8px;scrollbar-width:none}
-.chips::-webkit-scrollbar{display:none}
+.chips{display:flex;gap:7px;flex-wrap:wrap;padding:2px 2px 8px}
 .chip{white-space:nowrap;padding:7px 13px;border-radius:999px;font-size:12px;font-weight:700;background:var(--card);
   color:var(--sub);box-shadow:var(--sh)}
 .chip.on{background:var(--ink);color:var(--bg)}
@@ -234,19 +234,26 @@ main{padding:14px 14px calc(96px + env(safe-area-inset-bottom));max-width:620px;
 .mask{position:fixed;inset:0;background:rgba(40,25,30,.44);z-index:100;opacity:0;transition:.22s;backdrop-filter:blur(2px)}
 .mask.on{opacity:1}
 .sheet{position:fixed;left:0;right:0;bottom:0;z-index:101;background:var(--card);border-radius:26px 26px 0 0;
-  padding:8px 18px calc(24px + env(safe-area-inset-bottom));max-height:92dvh;overflow-y:auto;
+  padding:8px 18px calc(24px + env(safe-area-inset-bottom));max-height:92dvh;overflow-y:auto;overflow-x:hidden;
   transform:translateY(102%);transition:transform .3s cubic-bezier(.2,.9,.3,1);max-width:620px;margin:0 auto}
 .sheet.on{transform:none}
 .grab{width:40px;height:4px;border-radius:99px;background:var(--line);margin:8px auto 14px}
 .sheet h3{margin:0 0 14px;font-size:17px;font-weight:800;display:flex;align-items:center;gap:7px}
 label.f{display:block;margin-bottom:12px}
 label.f>span{display:block;font-size:11px;font-weight:800;color:var(--sub);margin-bottom:5px}
-.inp{width:100%;padding:12px 13px;border-radius:13px;border:1.5px solid var(--line);background:var(--bg);outline:none}
+.inp{width:100%;max-width:100%;min-width:0;display:block;padding:12px 13px;border-radius:13px;
+  border:1.5px solid var(--line);background:var(--bg);outline:none;
+  -webkit-appearance:none;appearance:none;font-variant-numeric:tabular-nums}
+input[type=date].inp,input[type=time].inp,input[type=datetime-local].inp{
+  min-height:46px;line-height:1.2;text-align:left}
+input[type=date].inp::-webkit-date-and-time-value,
+input[type=time].inp::-webkit-date-and-time-value{text-align:left;margin:0}
 .inp:focus{border-color:var(--accent)}
 textarea.inp{min-height:88px;resize:vertical;line-height:1.6}
-.seg{display:flex;gap:6px}
-.seg button{flex:1;padding:11px 4px;border-radius:13px;background:var(--bg);border:1.5px solid var(--line);
-  font-size:13px;font-weight:700;color:var(--sub)}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{flex:1 1 0;min-width:64px;padding:11px 4px;border-radius:13px;background:var(--bg);
+  border:1.5px solid var(--line);font-size:13px;font-weight:700;color:var(--sub);white-space:nowrap}
+.seg.sw button{min-width:40px;flex:1 1 40px}
 .seg button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .sheet .btn{width:100%;justify-content:center;padding:14px;font-size:15px;margin-top:6px}
 input[type=range]{-webkit-appearance:none;width:100%;height:9px;border-radius:99px;background:linear-gradient(90deg,#6FA8E8,#C9C2C6 50%,#FFA24E);outline:none}
@@ -300,6 +307,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:11px;word-
     <button class="icobtn" onclick="openSettings()"><i data-lucide="settings"></i><span class="cloud-dot" id="cloudDot"></span></button>
     <button class="icobtn" onclick="logout()"><i data-lucide="log-out"></i></button>
   </header>
+  <div id="updBar" class="hidden" onclick="doUpdate()"></div>
   <div id="syncBar" class="hidden" onclick="openSettings()"></div>
   </div>
   <main>
@@ -335,7 +343,7 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='1.4（2026-08-23）';
+const APP_VERSION='1.6（2026-08-23）';
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
 const SAMPLE={
@@ -377,6 +385,10 @@ const todayY=()=>ymd(new Date());
 const pYMD=s=>{const[a,b,c]=String(s).split('-').map(Number);return new Date(a,b-1,c);};
 const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
 const uname=id=>USERS[id]?USERS[id].name:'ふたり';
+/* 予定の終了日（未設定なら開始日と同じ）と、ある日がその期間に含まれるか */
+const evEnd=e=>(e.end&&e.end>e.date)?e.end:e.date;
+const evCovers=(e,d)=>d>=e.date&&d<=evEnd(e);
+const evDays=e=>Math.round((pYMD(evEnd(e))-pYMD(e.date))/864e5)+1;
 function relTime(ts){
   if(!ts)return'';
   const m=Math.floor((Date.now()-ts)/60000);
@@ -543,8 +555,33 @@ function boot(id){
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
   ui.month=todayY().slice(0,7); ui.calCur=todayY().slice(0,7); ui.calSel=todayY();
   bootAt=Date.now(); render(); Cloud.init(); setTimeout(offerSampleCleanup,900);
+  setTimeout(maybeCheckUpdate,2500);
   clearInterval(window._sbT); window._sbT=setInterval(updateSyncBar,4000);
 }
+
+/* ---------- アプリの更新チェック ---------- */
+let lastUpdCheck=0, newVer='';
+async function checkUpdate(){
+  if(location.protocol==='file:'||newVer)return;
+  try{
+    const r=await fetch(location.pathname,{cache:'reload'});   /* 通信して手元の控えも入れ替える */
+    if(!r.ok)return;
+    const m=(await r.text()).match(/APP_VERSION\s*=\s*'([^']+)'/);
+    if(m&&m[1]&&m[1]!==APP_VERSION){ newVer=m[1]; showUpdBar(); }
+  }catch(e){}
+}
+function maybeCheckUpdate(){
+  if(Date.now()-lastUpdCheck<900000)return;
+  lastUpdCheck=Date.now(); checkUpdate();
+}
+function showUpdBar(){
+  const el=document.getElementById('updBar'); if(!el||!newVer)return;
+  el.className='syncbar new';
+  el.innerHTML=`<span class="ic">✨</span><div><b>新しいバージョン ${esc(newVer.split('（')[0])} があります</b>
+    <em>タップすると最新の状態に更新します（データはそのままです）</em></div><span class="go">更新 ›</span>`;
+  icons();
+}
+function doUpdate(){ location.reload(); }
 
 /* ---------- 同期状態のバナー ---------- */
 let bootAt=Date.now();
@@ -679,7 +716,7 @@ function moodSave(){
 /* カレンダーの「デート」「記念日」から、いちばん近い予定を拾う */
 function nextMeet(){
   return live('events')
-    .filter(e=>(e.cat==='date'||e.cat==='anniv')&&e.date>=todayY())
+    .filter(e=>(e.cat==='date'||e.cat==='anniv')&&evEnd(e)>=todayY())
     .sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'00:00').localeCompare(b.time||'00:00'))[0]||null;
 }
 function heroHTML(){
@@ -688,9 +725,9 @@ function heroHTML(){
   if(!nm){
     cd=`<div class="cd"><b>予定なし</b></div>
         <div class="dt">カレンダーに「デート」の予定を入れると、ここにカウントダウンが出ます</div>`;
-  }else if(nm.date===todayY()){
+  }else if(nm.date<=todayY()){
     cd=`<div class="cd"><b>今日は会える日🎉</b></div>
-        <div class="dt">${nm.time?nm.time+' ・ ':''}${esc(nm.title)}</div>`;
+        <div class="dt">${nm.time?nm.time+' ・ ':''}${esc(nm.title)}${evEnd(nm)!==nm.date?`（${Number(evEnd(nm).slice(5,7))}/${Number(evEnd(nm).slice(8))}まで）`:''}</div>`;
   }else{
     const t=new Date(nm.date+'T'+(nm.time||'00:00')), diff=t-now;
     const d=Math.max(0,Math.floor(diff/864e5)),h=Math.max(0,Math.floor(diff%864e5/36e5)),mi=Math.max(0,Math.floor(diff%36e5/6e4));
@@ -712,7 +749,7 @@ function renderHome(){
   const th=todayY().slice(0,7);
   const mSum=live('expenses').filter(e=>e.date.startsWith(th)).reduce((a,b)=>a+Number(b.amount),0);
   const undone=live('chores').filter(c=>!c.done).length;
-  const nextEv=live('events').filter(e=>e.date>=todayY()).sort((a,b)=>a.date.localeCompare(b.date))[0];
+  const nextEv=live('events').filter(e=>evEnd(e)>=todayY()).sort((a,b)=>a.date.localeCompare(b.date))[0];
   const wOpen=live('wishes').filter(w=>!w.done).length;
   $('#view-home').innerHTML=
    `<div class="mood-row">${moodCard('keisuke')}${moodCard('kotomi')}</div>
@@ -833,12 +870,12 @@ function renderCal(){
     let cells='';
     for(let i=0;i<42;i++){
       const d=addDays(start,i), s=ymd(d), out=d.getMonth()!==m-1;
-      const de=evs.filter(e=>e.date===s);
+      const de=evs.filter(e=>evCovers(e,s));
       cells+=`<button class="cel ${out?'out':''} ${s===todayY()?'today':''} ${s===ui.calSel?'sel':''}" onclick="ui.calSel='${s}';render()">
         <span style="${d.getDay()===0?'color:var(--accent)':d.getDay()===6?'color:var(--k)':''}">${d.getDate()}</span>
         <span class="dots">${de.slice(0,3).map(e=>`<i style="background:${EV_CAT[e.cat].c}"></i>`).join('')}</span></button>`;
     }
-    const sel=evs.filter(e=>e.date===ui.calSel).sort((a,b)=>(a.time||'99').localeCompare(b.time||'99'));
+    const sel=evs.filter(e=>evCovers(e,ui.calSel)).sort((a,b)=>(a.time||'99').localeCompare(b.time||'99'));
     const sd=pYMD(ui.calSel);
     body=`<div class="card">
       <div class="navmonth"><button onclick="mvCal(-1)"><i data-lucide="chevron-left"></i></button>
@@ -848,8 +885,8 @@ function renderCal(){
     <div class="card"><div class="sec-head"><h2>${sd.getMonth()+1}月${sd.getDate()}日（${'日月火水木金土'[sd.getDay()]}）の予定</h2></div>
       ${sel.length?sel.map(evLine).join(''):'<div class="empty"><div>🗓</div>この日の予定はありません</div>'}</div>`;
   }else{
-    const up=evs.filter(e=>e.date>=todayY()).sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'99').localeCompare(b.time||'99'));
-    const past=evs.filter(e=>e.date<todayY()).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
+    const up=evs.filter(e=>evEnd(e)>=todayY()).sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'99').localeCompare(b.time||'99'));
+    const past=evs.filter(e=>evEnd(e)<todayY()).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
     body=`<div class="card"><div class="sec-head"><h2><i data-lucide="calendar-clock"></i>これからの予定</h2></div>
       ${up.length?up.map(e=>evLine(e,true)).join(''):'<div class="empty"><div>🗓</div>予定がありません</div>'}</div>
       ${past.length?`<div class="card"><div class="sec-head"><h2 class="muted">過去の予定</h2></div>${past.map(e=>evLine(e,true)).join('')}</div>`:''}`;
@@ -870,6 +907,7 @@ function evLine(e,showDate){
     ${showDate?`<div class="date-tag"><b>${d.getDate()}</b><span>${d.getMonth()+1}月(${'日月火水木金土'[d.getDay()]})</span></div>`:''}
     <div style="min-width:0;flex:1">
       <div style="font-weight:700;font-size:14px">${e.time?`<span class="pill" style="margin-right:5px">${e.time}</span>`:''}${esc(e.title)}</div>
+      ${evEnd(e)!==e.date?`<div class="muted" style="margin-top:2px">📅 ${Number(e.date.slice(5,7))}/${Number(e.date.slice(8))} 〜 ${Number(evEnd(e).slice(5,7))}/${Number(evEnd(e).slice(8))}（${evDays(e)}日間）</div>`:''}
       ${e.memo?`<div class="muted" style="margin-top:2px">${esc(e.memo)}</div>`:''}
       <div class="row" style="gap:5px;margin-top:5px;flex-wrap:wrap"><span class="pill" style="color:${c.c}">${c.l}</span>${editedBy(e)}</div>
     </div>
@@ -883,6 +921,8 @@ function evSheet(id){
   openSheet(`<h3><i data-lucide="calendar-days"></i>${e?'予定を編集':'予定を追加'}</h3>
     <label class="f"><span>タイトル</span><input class="inp" id="vTitle" placeholder="例：水族館デート" value="${esc(e?e.title:'')}"></label>
     <label class="f"><span>日付</span><input class="inp" id="vDate" type="date" value="${e?e.date:(ui.calSel||todayY())}"></label>
+    <label class="f"><span>終了日（任意・旅行や連休など、日をまたぐとき）</span>
+      <input class="inp" id="vEnd" type="date" value="${e&&e.end?e.end:''}"></label>
     <label class="f"><span>時刻（任意）</span><input class="inp" id="vTime" type="time" value="${e?e.time:''}"></label>
     <label class="f"><span>カテゴリ</span>${seg('ecat',Object.entries(EV_CAT).map(([k,v])=>({v:k,l:v.l})),e?e.cat:'date')}</label>
     <label class="f"><span>メモ（任意）</span><input class="inp" id="vMemo" value="${esc(e?e.memo:'')}"></label>
@@ -891,6 +931,8 @@ function evSheet(id){
 function evSave(id){
   const t=val('vTitle'); if(!t){toast('タイトルを入力してね');return;}
   const o={title:t,date:val('vDate')||todayY(),time:val('vTime'),cat:segVal('ecat'),memo:val('vMemo')};
+  const en=val('vEnd'); o.end=(en&&en>o.date)?en:'';
+  if(en&&en<o.date){ toast('終了日は開始日より後にしてね'); return; }
   if(id){const x=S.events.find(v=>v.id===id);Object.assign(x,o);touch(x);}
   else S.events.push(touch(Object.assign({id:uid(),deleted:false},o)));
   ui.calSel=o.date; ui.calCur=o.date.slice(0,7);
@@ -908,8 +950,10 @@ function renderChore(){
     <div class="card">
       <div class="row"><div style="font-weight:800">今日の進み具合</div><div class="sp" style="margin-left:auto;font-weight:800;color:var(--ok)">${done}/${all.length}（${pct}%）</div></div>
       <div class="prog"><i style="width:${pct}%"></i></div>
-      <div class="muted" style="margin-top:8px">${!all.length?'「タスク追加」から登録してね':pct===100?'🎉 ぜんぶ完了！おつかれさま':'コツコツいこう〜'}
-        <button class="btn sm line" style="float:right" onclick="choreReset()"><i data-lucide="refresh-cw"></i>チェックをリセット</button></div>
+      <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+        <div class="muted" style="flex:1 1 120px;min-width:0">${!all.length?'「タスク追加」から登録してね':pct===100?'🎉 ぜんぶ完了！おつかれさま':'コツコツいこう〜'}</div>
+        ${done?`<button class="btn sm line" style="flex:0 0 auto" onclick="choreReset()"><i data-lucide="refresh-cw"></i>チェックをリセット</button>`:''}
+      </div>
     </div>
     <div class="chips">
       ${[{v:'all',l:'すべて'},{v:'keisuke',l:'🐻 けいすけ'},{v:'kotomi',l:'🐰 ことみ'},{v:'both',l:'👫 ふたりで'}]
@@ -1038,7 +1082,7 @@ function rSheet(id){
   const r=id?live('rules').find(x=>x.id===id):null;
   openSheet(`<h3><i data-lucide="scroll-text"></i>${r?'メモを編集':'約束を追加'}</h3>
     <label class="f"><span>内容</span><textarea class="inp" id="rTx" placeholder="例：けんかしても寝る前に仲直りする">${esc(r?r.text:'')}</textarea></label>
-    <label class="f"><span>色</span><div class="seg" data-seg="rcol">${NOTE_BG.map((c,i)=>
+    <label class="f"><span>色</span><div class="seg sw" data-seg="rcol">${NOTE_BG.map((c,i)=>
       `<button type="button" data-v="${i}" class="${(r?r.color:0)===i?'on':''}" style="background:${c};height:44px" onclick="segPick(this)"></button>`).join('')}</div></label>
     <button class="btn" onclick="rSave('${id||''}')"><i data-lucide="check"></i>保存する</button>`);
 }
@@ -1099,6 +1143,7 @@ function openSettings(){
     </div>
     <input type="file" id="impF" accept="application/json,.json" class="hidden" onchange="impJSON(this)">
     <button class="btn line" style="width:100%;margin-top:20px;justify-content:center" onclick="resetAll()"><i data-lucide="trash-2"></i>データをすべて消す</button>
+    <button class="btn line" style="width:100%;margin-top:10px;justify-content:center" onclick="manualUpdateCheck()"><i data-lucide="refresh-cw"></i>アプリの更新を確認</button>
     <div class="muted" style="text-align:center;margin-top:14px">ふたりのおうち　バージョン ${APP_VERSION}<br><span style="font-size:10px">更新したのに変わらないときは、画面を下に引っぱって再読み込みしてください</span></div>`);
 }
 function setSave(){
@@ -1131,6 +1176,12 @@ function cloudSave(){
 }
 function cloudOff(){ Cloud.setConf(null); Cloud.stop(); closeSheet(); toast('この端末だけで保存する設定にしました'); }
 function cloudReset(){ Cloud.setConf(undefined); Cloud.stop(); closeSheet(); toast('初期設定に戻しました'); Cloud.init(); }
+async function manualUpdateCheck(){
+  if(location.protocol==='file:'){ toast('サーバーに置いた状態でご利用ください'); return; }
+  toast('確認しています…'); lastUpdCheck=Date.now(); newVer=''; await checkUpdate();
+  if(newVer){ closeSheet(); toast('新しいバージョンがあります'); }
+  else toast('最新の状態です ✅');
+}
 function manualSync(){
   if(!Cloud.ready){ toast('まだ接続できていません。通信環境を確認してね'); return; }
   Cloud.push(); toast('クラウドに保存しました');
@@ -1199,6 +1250,10 @@ window.addEventListener('hashchange',()=>{
 icons();
 /* 通信が復活したら自動で再接続 */
 window.addEventListener('online',()=>{ if(ME&&!Cloud.ready)Cloud.init(); });
-document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&ME&&!Cloud.ready)Cloud.init(); });
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden||!ME)return;
+  if(!Cloud.ready)Cloud.init();
+  maybeCheckUpdate();
+});
 (function(){ const u=localStorage.getItem(LS_USER); if(u&&USERS[u])boot(u); })();
 </script>
