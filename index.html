@@ -123,6 +123,11 @@ main{padding:14px 14px calc(96px + env(safe-area-inset-bottom));max-width:620px;
 .badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px}
 .badge.keisuke{background:var(--k-bg);color:var(--k)} .badge.kotomi{background:var(--ko-bg);color:var(--ko)}
 .badge.both{background:var(--bg2);color:var(--sub)}
+.badge.joint{background:#E7F4EE;color:#2C7F63}
+.pill.wait{background:#FFF0D2;color:#8A6212}
+.pill.paid{background:#E4F3EB;color:#2C7F63}
+@media (prefers-color-scheme:dark){.badge.joint{background:#1E3A31;color:#7FD3B4}
+ .pill.wait{background:#3E3320;color:#E0B963}.pill.paid{background:#1E3A31;color:#7FD3B4}}
 .muted{color:var(--sub);font-size:12px}
 .empty{text-align:center;color:var(--sub);font-size:13px;padding:26px 10px}
 .empty div{font-size:30px;margin-bottom:6px}
@@ -343,7 +348,7 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='1.7（2026-08-23）';
+const APP_VERSION='1.8（2026-08-23）';
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
 const SAMPLE={
@@ -430,13 +435,13 @@ function seed(){
       keisuke:{value:0,comment:'',updatedAt:0,lastModifiedBy:'keisuke'},
       kotomi :{value:0,comment:'',updatedAt:0,lastModifiedBy:'kotomi'}
     },
-    expenses:[], events:[], chores:[], wishes:[], rules:[]
+    expenses:[], events:[], chores:[], wishes:[], rules:[], payouts:[]
   };
 }
 function ensure(s){
   const base=seed();
   if(!s)return base;
-  ['expenses','events','chores','wishes','rules'].forEach(k=>{ if(!Array.isArray(s[k]))s[k]=[]; });
+  ['expenses','events','chores','wishes','rules','payouts'].forEach(k=>{ if(!Array.isArray(s[k]))s[k]=[]; });
   s.settings=Object.assign({},base.settings,s.settings||{});
   s.moods=Object.assign({},base.moods,s.moods||{});
   return s;
@@ -451,14 +456,14 @@ function mergeArr(local,remote){
 }
 function mergeState(remote){
   if(!remote)return;
-  ['expenses','events','chores','wishes','rules'].forEach(k=>{ S[k]=mergeArr(S[k],remote[k]); });
+  ['expenses','events','chores','wishes','rules','payouts'].forEach(k=>{ S[k]=mergeArr(S[k],remote[k]); });
   ['keisuke','kotomi'].forEach(u=>{
     const r=remote.moods&&remote.moods[u]; if(r&&(r.updatedAt||0)>(S.moods[u].updatedAt||0)) S.moods[u]=r;
   });
   if(remote.settings&&(remote.settings.updatedAt||0)>(S.settings.updatedAt||0)) S.settings=remote.settings;
   // 30日以上前の削除済みを掃除
   const cut=Date.now()-30*864e5;
-  ['expenses','events','chores','wishes','rules'].forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
+  ['expenses','events','chores','wishes','rules','payouts'].forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
 }
 const live=k=>(S[k]||[]).filter(x=>!x.deleted);
 
@@ -657,9 +662,9 @@ function askConfirm(msg){
     mk.onclick=()=>fin(false);
   }).finally(()=>{ $('#mask').onclick=closeSheet; });
 }
-function seg(name,opts,cur){
+function seg(name,opts,cur,cb){
   return `<div class="seg" data-seg="${name}">`+opts.map(o=>
-    `<button type="button" data-v="${esc(o.v)}" class="${o.v===cur?'on':''}" onclick="segPick(this)">${esc(o.l)}</button>`).join('')+`</div>`;
+    `<button type="button" data-v="${esc(o.v)}" class="${o.v===cur?'on':''}" onclick="segPick(this)${cb?';'+cb+'()':''}">${esc(o.l)}</button>`).join('')+`</div>`;
 }
 function segPick(b){ [...b.parentNode.children].forEach(x=>x.classList.remove('on')); b.classList.add('on'); }
 function segVal(name){ const e=document.querySelector(`[data-seg="${name}"] .on`); return e?e.dataset.v:''; }
@@ -770,18 +775,40 @@ function renderHome(){
 }
 
 /* ============================ MONEY ============================ */
-function shareOf(e){
-  const a=Number(e.amount);
-  const k=e.split==='half'?a/2:e.split==='keisuke'?a:0;
-  return {k, ko:a-k};
+/* 実質の支払元。共同口座から返金する（予定・済み）ものは共同口座払いとみなす */
+function realSrc(e){ return (e.payer==='joint'||e.reim==='wait'||e.reim==='done')?'joint':e.payer; }
+/* 精算額。正なら「ことみ → けいすけ」、負なら「けいすけ → ことみ」 */
+function settlement(list,pays){
+  let bal=0;
+  list.forEach(e=>{
+    const a=Number(e.amount);
+    const kShare=e.split==='half'?a/2:e.split==='keisuke'?a:0;
+    const src=realSrc(e);
+    if(src==='joint')      bal += (a/2 - kShare);   /* 共同口座はふたりの折半とみなす */
+    else if(src==='keisuke') bal += (a - kShare);
+    else                     bal -= kShare;
+  });
+  (pays||[]).forEach(p=>{
+    const a=Number(p.amount);                        /* 共同のお金を個人が受け取った分 */
+    bal += (p.to==='keisuke') ? -a/2 : a/2;
+  });
+  return bal;
+}
+function srcBadge(e){
+  return e.payer==='joint' ? '<span class="badge joint">🏦共同口座が支払</span>' : badge(e.payer,uname(e.payer)+'が支払');
 }
 function renderMoney(){
-  const all=live('expenses').sort((a,b)=>b.date.localeCompare(a.date)||b.updatedAt-a.updatedAt);
-  const list=ui.month==='all'?all:all.filter(e=>e.date.startsWith(ui.month));
-  const tot=list.reduce((a,b)=>a+Number(b.amount),0);
-  const byK=list.filter(e=>e.payer==='keisuke').reduce((a,b)=>a+Number(b.amount),0);
-  const byKo=tot-byK;
-  let bal=0; list.forEach(e=>{const s=shareOf(e); bal+= e.payer==='keisuke'? s.ko : -s.k;});
+  const inM=x=>ui.month==='all'||x.date.startsWith(ui.month);
+  const list=live('expenses').filter(inM).sort((a,b)=>b.date.localeCompare(a.date)||b.updatedAt-a.updatedAt);
+  const pays=live('payouts').filter(inM).sort((a,b)=>b.date.localeCompare(a.date));
+  const sum=arr=>arr.reduce((a,b)=>a+Number(b.amount),0);
+  const tot=sum(list);
+  const byK=sum(list.filter(e=>e.payer==='keisuke')), byKo=sum(list.filter(e=>e.payer==='kotomi')),
+        byJ=sum(list.filter(e=>e.payer==='joint'));
+  const bal=settlement(list,pays);
+  /* 返金待ちは月をまたぐので全期間で集計 */
+  const wait=live('expenses').filter(e=>e.reim==='wait'&&e.payer!=='joint');
+  const wK=sum(wait.filter(e=>e.payer==='keisuke')), wKo=sum(wait.filter(e=>e.payer==='kotomi'));
   const settle = Math.abs(bal)<1
     ? `<div style="color:var(--ok)">✅ 貸し借りなし！ぴったりです</div>`
     : bal>0 ? `${USERS.kotomi.emoji} ことみ → けいすけ ${USERS.keisuke.emoji}<br><span class="amt">${yen(bal)}</span>`
@@ -798,18 +825,30 @@ function renderMoney(){
       </div>
       <div style="text-align:center"><button class="chip ${ui.month==='all'?'on':''}" onclick="ui.month=(ui.month==='all'?todayY().slice(0,7):'all');render()">全期間で見る</button></div>
       <div class="sum">
-        <div><span class="muted">合計</span><b>${yen(tot)}</b></div>
+        <div><span class="muted">支出合計</span><b>${yen(tot)}</b></div>
         <div><span class="muted">件数</span><b>${list.length}件</b></div>
-        <div style="background:var(--k-bg)"><span class="muted">🐻 けいすけ立替</span><b style="color:var(--k)">${yen(byK)}</b></div>
-        <div style="background:var(--ko-bg)"><span class="muted">🐰 ことみ立替</span><b style="color:var(--ko)">${yen(byKo)}</b></div>
+        <div style="background:var(--k-bg)"><span class="muted">🐻 けいすけ払い</span><b style="color:var(--k)">${yen(byK)}</b></div>
+        <div style="background:var(--ko-bg)"><span class="muted">🐰 ことみ払い</span><b style="color:var(--ko)">${yen(byKo)}</b></div>
+        <div style="grid-column:1/-1;background:#E7F4EE"><span class="muted">🏦 共同口座から</span><b style="color:#2C7F63">${yen(byJ)}</b></div>
       </div>
-      <div class="settle"><div class="muted" style="font-weight:700;margin-bottom:2px">精算するなら</div>${settle}</div>
+      <div class="settle"><div class="muted" style="font-weight:700;margin-bottom:2px">個人どうしの精算</div>${settle}</div>
+      <div class="muted" style="font-size:11px;margin-top:8px;text-align:center">共同口座のお金は、ふたりのもの（折半）として計算しています</div>
     </div>
+
+    ${(wK||wKo)?`<div class="card" style="border:1.5px solid #F0C98B">
+      <div class="sec-head"><h2>🏦 共同口座から返す予定</h2></div>
+      <div class="muted" style="margin-bottom:10px">個人のお金で立て替えた分です。共同口座から振り込んだら「振込済み」にしてください。</div>
+      ${wK?`<div class="item"><div style="flex:1">${badge('keisuke')} へ返金</div>
+        <div style="text-align:right"><div class="amt-r">${yen(wK)}</div>
+        <button class="btn sm line" style="margin-top:4px" onclick="markPaid('keisuke')">振込済みにする</button></div></div>`:''}
+      ${wKo?`<div class="item"><div style="flex:1">${badge('kotomi')} へ返金</div>
+        <div style="text-align:right"><div class="amt-r">${yen(wKo)}</div>
+        <button class="btn sm line" style="margin-top:4px" onclick="markPaid('kotomi')">振込済みにする</button></div></div>`:''}
+    </div>`:''}
+
     <div class="card">
-      <div class="sec-head"><h2><i data-lucide="receipt-text"></i>履歴</h2></div>
-      ${list.length?list.map(e=>{
-        const s=shareOf(e);
-        return `<div class="item">
+      <div class="sec-head"><h2><i data-lucide="receipt-text"></i>支出の履歴</h2></div>
+      ${list.length?list.map(e=>`<div class="item">
           <div style="width:40px;flex-shrink:0;text-align:center">
             <div style="font-size:15px;font-weight:800;line-height:1.1">${Number(e.date.slice(8))}</div>
             <div class="muted" style="font-size:10px">${Number(e.date.slice(5,7))}月</div></div>
@@ -817,8 +856,10 @@ function renderMoney(){
             <div style="font-weight:700;font-size:14px">${esc(e.title)}</div>
             <div class="row" style="gap:5px;flex-wrap:wrap;margin-top:4px">
               <span class="pill">${esc(e.cat)}</span>
-              ${badge(e.payer,uname(e.payer)+'が支払')}
+              ${srcBadge(e)}
               <span class="pill">${e.split==='half'?'折半':e.split==='keisuke'?'けいすけ負担':'ことみ負担'}</span>
+              ${e.reim==='wait'?'<span class="pill wait">🏦 返金待ち</span>':''}
+              ${e.reim==='done'?'<span class="pill paid">🏦 共同口座から返済済み</span>':''}
             </div>
             <div style="margin-top:5px">${editedBy(e)}</div>
           </div>
@@ -826,9 +867,55 @@ function renderMoney(){
             <div class="amt-r">${yen(e.amount)}</div>
             <div class="iact"><button onclick="expSheet('${e.id}')"><i data-lucide="pencil"></i></button>
               <button onclick="del('expenses','${e.id}','この支出')"><i data-lucide="trash-2"></i></button></div>
-          </div></div>`;}).join('')
+          </div></div>`).join('')
       :'<div class="empty"><div>🧾</div>この期間の支出はまだありません</div>'}
+    </div>
+
+    <div class="card">
+      <div class="sec-head"><h2>🏦 共同口座からの払い戻し</h2>
+        <button class="btn sm ghost sp" onclick="payoutSheet()"><i data-lucide="plus"></i>追加</button></div>
+      <div class="muted" style="margin-bottom:8px;font-size:11px">共同口座から個人口座にお金を戻したときの記録です（立て替えの返金は上の「返す予定」から行ってください）。</div>
+      ${pays.length?pays.map(p=>`<div class="item">
+        <div style="width:40px;flex-shrink:0;text-align:center">
+          <div style="font-size:15px;font-weight:800;line-height:1.1">${Number(p.date.slice(8))}</div>
+          <div class="muted" style="font-size:10px">${Number(p.date.slice(5,7))}月</div></div>
+        <div style="min-width:0;flex:1">
+          <div class="row" style="gap:5px;flex-wrap:wrap">
+            <span class="badge joint">🏦共同口座</span><span class="muted">→</span>${badge(p.to)}</div>
+          ${p.memo?`<div class="muted" style="margin-top:3px">${esc(p.memo)}</div>`:''}
+          <div style="margin-top:5px">${editedBy(p)}</div>
+        </div>
+        <div style="text-align:right"><div class="amt-r">${yen(p.amount)}</div>
+          <div class="iact"><button onclick="payoutSheet('${p.id}')"><i data-lucide="pencil"></i></button>
+            <button onclick="del('payouts','${p.id}','この払い戻し')"><i data-lucide="trash-2"></i></button></div></div>
+      </div>`).join(''):'<div class="empty" style="padding:16px"><div>🏦</div>払い戻しの記録はありません</div>'}
     </div>`;
+}
+async function markPaid(who){
+  const t=live('expenses').filter(e=>e.reim==='wait'&&e.payer===who);
+  const amt=t.reduce((a,b)=>a+Number(b.amount),0);
+  if(!await askConfirm(uname(who)+'さんへ '+yen(amt)+' を共同口座から振り込みましたか？'))return;
+  t.forEach(e=>{ e.reim='done'; touch(e); });
+  save(); toast('振込済みにしました');
+}
+function payoutSheet(id){
+  const p=id?live('payouts').find(x=>x.id===id):null;
+  openSheet(`<h3>🏦 共同口座からの払い戻し</h3>
+    <div class="help" style="margin-bottom:12px">共同口座から個人の口座にお金を戻した記録です。
+      共同のお金をひとりが受け取ることになるため、個人どうしの精算にも反映されます。</div>
+    <label class="f"><span>受け取った人</span>${seg('pto',[{v:'keisuke',l:'🐻 けいすけ'},{v:'kotomi',l:'🐰 ことみ'}],p?p.to:ME)}</label>
+    <label class="f"><span>金額（円）</span><input class="inp" id="pAmt" type="number" inputmode="numeric" placeholder="0" value="${p?p.amount:''}"></label>
+    <label class="f"><span>日付</span><input class="inp" id="pDate" type="date" value="${p?p.date:todayY()}"></label>
+    <label class="f"><span>メモ（任意）</span><input class="inp" id="pMemo" placeholder="例：使わなかった分を戻した" value="${esc(p?p.memo:'')}"></label>
+    <button class="btn" onclick="payoutSave('${id||''}')"><i data-lucide="check"></i>保存する</button>`);
+}
+function payoutSave(id){
+  const a=Number(val('pAmt'));
+  if(!a||a<=0){toast('金額を入力してね');return;}
+  const o={to:segVal('pto'),amount:a,date:val('pDate')||todayY(),memo:val('pMemo')};
+  if(id){const x=S.payouts.find(v=>v.id===id);Object.assign(x,o);touch(x);}
+  else S.payouts.push(touch(Object.assign({id:uid(),deleted:false},o)));
+  closeSheet(); save(); toast(id?'更新しました':'払い戻しを記録しました');
 }
 function mvMonth(n){
   if(ui.month==='all')ui.month=todayY().slice(0,7);
@@ -842,15 +929,27 @@ function expSheet(id){
     <label class="f"><span>金額（円）</span><input class="inp" id="eAmt" type="number" inputmode="numeric" placeholder="0" value="${e?e.amount:''}"></label>
     <label class="f"><span>日付</span><input class="inp" id="eDate" type="date" value="${e?e.date:todayY()}"></label>
     <label class="f"><span>カテゴリ</span><select class="inp" id="eCat">${EXP_CAT.map(c=>`<option ${e&&e.cat===c?'selected':''}>${c}</option>`).join('')}</select></label>
-    <label class="f"><span>支払った人</span>${seg('payer',[{v:'keisuke',l:'🐻 けいすけ'},{v:'kotomi',l:'🐰 ことみ'}],e?e.payer:ME)}</label>
-    <label class="f"><span>負担のしかた</span>${seg('split',[{v:'half',l:'折半'},{v:'keisuke',l:'けいすけ'},{v:'kotomi',l:'ことみ'}],e?e.split:'half')}</label>
+    <label class="f"><span>どこから払った？</span>
+      ${seg('payer',[{v:'keisuke',l:'🐻 けいすけ'},{v:'kotomi',l:'🐰 ことみ'},{v:'joint',l:'🏦 共同口座'}],e?e.payer:ME,'expToggleReim')}</label>
+    <label class="f"><span>負担するのは？</span>${seg('split',[{v:'half',l:'折半'},{v:'keisuke',l:'けいすけ'},{v:'kotomi',l:'ことみ'}],e?e.split:'half')}</label>
+    <div id="reimBox"><label class="f"><span>共同口座から返してもらう？</span>
+      ${seg('reim',[{v:'',l:'しない'},{v:'wait',l:'返金待ち'},{v:'done',l:'振込済み'}],e?(e.reim||''):'')}</label>
+      <div class="help" style="margin:-4px 0 12px;font-size:11px">個人のお金で立て替えて、あとから共同口座から返してもらう場合は「返金待ち」に。
+        振り込みが終わったら「振込済み」にします。どちらの場合も、その支出は共同口座が負担したものとして精算されます。</div></div>
     <button class="btn" onclick="expSave('${id||''}')"><i data-lucide="check"></i>保存する</button>`);
+  expToggleReim();
+}
+function expToggleReim(){
+  const el=document.getElementById('reimBox');
+  if(el) el.style.display = segVal('payer')==='joint' ? 'none' : 'block';
 }
 function expSave(id){
   const t=val('eTitle'), a=Number(val('eAmt'));
   if(!t){toast('項目名を入力してね');return;} if(!a||a<=0){toast('金額を入力してね');return;}
-  const o={title:t,amount:a,date:val('eDate')||todayY(),cat:val('eCat'),payer:segVal('payer'),split:segVal('split')};
-  if(id){ Object.assign(S.expenses.find(x=>x.id===id),o); touch(S.expenses.find(x=>x.id===id)); }
+  const payer=segVal('payer');
+  const o={title:t,amount:a,date:val('eDate')||todayY(),cat:val('eCat'),payer:payer,split:segVal('split'),
+           reim: payer==='joint' ? '' : segVal('reim')};
+  if(id){ const x=S.expenses.find(v=>v.id===id); Object.assign(x,o); touch(x); }
   else S.expenses.push(touch(Object.assign({id:uid(),deleted:false},o)));
   closeSheet(); save(); toast(id?'支出を更新しました':'支出を追加しました');
 }
@@ -1212,7 +1311,7 @@ async function resetAll(){
   if(!await askConfirm('家計簿・予定・家事・Wish・ルールをすべて消します。相手の端末からも消えます。よろしいですか？'))return;
     /* 相手の端末からも確実に消えるよう、削除マークを付けて同期する */
   const now=Date.now();
-  ['expenses','events','chores','wishes','rules'].forEach(k=>{
+  ['expenses','events','chores','wishes','rules','payouts'].forEach(k=>{
     S[k].forEach(x=>{ x.deleted=true; x.updatedAt=now; x.lastModifiedBy=ME; });
   });
   ['keisuke','kotomi'].forEach(u=>{ S.moods[u]={value:0,comment:'',updatedAt:now,lastModifiedBy:u}; });
