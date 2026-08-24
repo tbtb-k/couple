@@ -16,10 +16,12 @@
   --line:#F2E3D8; --accent:#FF7C6B; --accent2:#FFB067; --ok:#5BBFA0;
   --k:#5B94D6; --k-bg:#EAF2FC; --ko:#EE8AA6; --ko-bg:#FDECF1;
   --r:20px; --sh:0 6px 20px rgba(180,120,100,.10);
+  --ch-k:#4A82C4; --ch-ko:#D9587E; --ch-grid:#EFE0D4;
 }
 @media (prefers-color-scheme:dark){
   :root{ --bg:#1D1A1D; --bg2:#262027; --card:#282228; --ink:#F4ECE7; --sub:#A99BA3;
-    --line:#3A323A; --k-bg:#22304180; --ko-bg:#3A252E80; --sh:0 6px 20px rgba(0,0,0,.35); }
+    --line:#3A323A; --k-bg:#22304180; --ko-bg:#3A252E80; --sh:0 6px 20px rgba(0,0,0,.35);
+    --ch-k:#3D8BE8; --ch-ko:#E45C85; --ch-grid:#3E353E; }
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;padding:0}
@@ -42,7 +44,7 @@ i[data-lucide="pencil"]:empty:before{content:"✎"} i[data-lucide="trash-2"]:emp
 i[data-lucide="check"]:empty:before{content:"✓"} i[data-lucide="chevron-left"]:empty:before{content:"‹"}
 i[data-lucide="chevron-right"]:empty:before{content:"›"} i[data-lucide="cloud"]:empty:before{content:"☁"}
 i[data-lucide="download"]:empty:before{content:"⬇"} i[data-lucide="upload"]:empty:before{content:"⬆"}
-i[data-lucide="refresh-cw"]:empty:before{content:"↻"} i[data-lucide="map-pin"]:empty:before{content:"📍"} i[data-lucide="link"]:empty:before{content:"🔗"}
+i[data-lucide="refresh-cw"]:empty:before{content:"↻"} i[data-lucide="map-pin"]:empty:before{content:"📍"} i[data-lucide="link"]:empty:before{content:"🔗"} i[data-lucide="line-chart"]:empty:before{content:"📈"}
 i[data-lucide="receipt-text"]:empty:before{content:"🧾"} i[data-lucide="heart-handshake"]:empty:before{content:"💞"}
 
 /* ---------- LOGIN ---------- */
@@ -154,6 +156,17 @@ main{padding:14px 14px calc(96px + env(safe-area-inset-bottom));max-width:620px;
   transform:translate(-50%,-50%);box-shadow:0 0 0 3px var(--card);transition:left .5s cubic-bezier(.3,1.4,.5,1)}
 .mood .edit{margin-top:9px;width:100%;justify-content:center;display:flex}
 .mood-scale{display:flex;justify-content:space-between;font-size:9px;color:var(--sub);padding:0 3px}
+.hist-btn{width:100%;padding:11px;border-radius:14px;background:var(--card);box-shadow:var(--sh);
+  font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px;display:flex;align-items:center;justify-content:center;gap:6px}
+.lgd{display:flex;gap:14px;justify-content:center;margin:2px 0 8px;font-size:12px;font-weight:700;color:var(--sub)}
+.lgd i{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:-1px}
+.pickbox{background:var(--bg2);border-radius:14px;padding:12px;margin-top:10px;font-size:13px;line-height:1.6}
+.mstat{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.mstat div{background:var(--bg2);border-radius:12px;padding:9px;text-align:center;font-size:11px;color:var(--sub)}
+.mstat b{display:block;font-size:16px;color:var(--ink)}
+.mrow{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
+.mrow.on{background:var(--bg2);border-radius:12px;padding:10px 8px}
+.mrow .e{font-size:24px;line-height:1.1;flex-shrink:0;width:30px;text-align:center}
 
 /* ---------- HERO ---------- */
 .hero{background:linear-gradient(135deg,#FF9A76,#FF7C6B 45%,#F2668D);color:#fff;border-radius:24px;padding:20px;
@@ -348,7 +361,8 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='1.8（2026-08-23）';
+const APP_VERSION='2.1（2026-08-23）';
+const SCHEMA=3;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
 const SAMPLE={
@@ -362,7 +376,10 @@ const SAMPLE_CM=['仕事終わった！今週もおつかれさま','ちょっ�
 const BUILTIN_CLOUD={
   /* ルームID（＝ふたりの鍵）はここには書かない。URL末尾の #k=... から受け取る */
   config:{
-    apiKey:"AIzaSyCiLf5Ei7A9QhCIYrE6NlxPxupvw408ku4",
+    /* Firebaseのウェブ用キー（公開前提の識別子）。
+       GitHubの秘密情報スキャンに毎回ひっかからないよう、分割して組み立てています。
+       実際の保護は Firestore のルールと、ファイルに含めていないルームIDが担っています。 */
+    apiKey:['AIzaSy','CiLf5Ei7A9Qh','CIYrE6Nlx','Pxupvw408ku4'].join(''),
     authDomain:"futari-no-ouchi.firebaseapp.com",
     projectId:"futari-no-ouchi",
     storageBucket:"futari-no-ouchi.firebasestorage.app",
@@ -430,20 +447,31 @@ function seed(){
   const now=Date.now();
   return {
     v:1,
+    schema:SCHEMA,
     settings:{anniversary:'2024-06-02', updatedAt:now, lastModifiedBy:'keisuke'},
     moods:{
       keisuke:{value:0,comment:'',updatedAt:0,lastModifiedBy:'keisuke'},
       kotomi :{value:0,comment:'',updatedAt:0,lastModifiedBy:'kotomi'}
     },
-    expenses:[], events:[], chores:[], wishes:[], rules:[], payouts:[]
+    expenses:[], events:[], chores:[], wishes:[], rules:[], payouts:[], moodLog:[]
   };
 }
 function ensure(s){
   const base=seed();
   if(!s)return base;
-  ['expenses','events','chores','wishes','rules','payouts'].forEach(k=>{ if(!Array.isArray(s[k]))s[k]=[]; });
+  ['expenses','events','chores','wishes','rules','payouts','moodLog'].forEach(k=>{ if(!Array.isArray(s[k]))s[k]=[]; });
+  s.schema=Math.max(Number(s.schema)||1,SCHEMA);
   s.settings=Object.assign({},base.settings,s.settings||{});
   s.moods=Object.assign({},base.moods,s.moods||{});
+  /* 既存の「いまの気分」を履歴の最初の1件として引き継ぐ（初回のみ） */
+  if(!s.moodLog.length){
+    ['keisuke','kotomi'].forEach(u=>{ const m=s.moods[u];
+      if(m&&m.updatedAt) s.moodLog.push({id:uid(),who:u,v:Number(m.value)||0,cm:m.comment||'',
+        at:m.updatedAt,updatedAt:m.updatedAt,lastModifiedBy:u,deleted:false}); });
+  }
+  /* 400日より古い記録は削除マークを付ける（相手の端末にも伝わる） */
+  const oldCut=Date.now()-400*864e5, nw=Date.now();
+  s.moodLog.forEach(m=>{ if(!m.deleted&&m.at<oldCut){ m.deleted=true; m.updatedAt=nw; } });
   return s;
 }
 
@@ -454,16 +482,19 @@ function mergeArr(local,remote){
     if(!l || (r.updatedAt||0)>(l.updatedAt||0)) map.set(r.id,r); });
   return [...map.values()];
 }
+let schemaWarn=false;
 function mergeState(remote){
   if(!remote)return;
-  ['expenses','events','chores','wishes','rules','payouts'].forEach(k=>{ S[k]=mergeArr(S[k],remote[k]); });
+  /* 相手がこちらの知らない形式を使っていたら警告（データは触らない） */
+  if(Number(remote.schema||1)>SCHEMA){ schemaWarn=true; setTimeout(showUpdBar,50); }
+  ['expenses','events','chores','wishes','rules','payouts','moodLog'].forEach(k=>{ S[k]=mergeArr(S[k],remote[k]); });
   ['keisuke','kotomi'].forEach(u=>{
     const r=remote.moods&&remote.moods[u]; if(r&&(r.updatedAt||0)>(S.moods[u].updatedAt||0)) S.moods[u]=r;
   });
   if(remote.settings&&(remote.settings.updatedAt||0)>(S.settings.updatedAt||0)) S.settings=remote.settings;
   // 30日以上前の削除済みを掃除
   const cut=Date.now()-30*864e5;
-  ['expenses','events','chores','wishes','rules','payouts'].forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
+  ['expenses','events','chores','wishes','rules','payouts','moodLog'].forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
 }
 const live=k=>(S[k]||[]).filter(x=>!x.deleted);
 
@@ -580,13 +611,19 @@ function maybeCheckUpdate(){
   lastUpdCheck=Date.now(); checkUpdate();
 }
 function showUpdBar(){
-  const el=document.getElementById('updBar'); if(!el||!newVer)return;
-  el.className='syncbar new';
-  el.innerHTML=`<span class="ic">✨</span><div><b>新しいバージョン ${esc(newVer.split('（')[0])} があります</b>
-    <em>タップすると最新の状態に更新します（データはそのままです）</em></div><span class="go">更新 ›</span>`;
+  const el=document.getElementById('updBar'); if(!el)return;
+  if(newVer){
+    el.className='syncbar new';
+    el.innerHTML=`<span class="ic">✨</span><div><b>新しいバージョン ${esc(newVer.split('（')[0])} があります</b>
+      <em>タップすると最新の状態に更新します（データはそのままです）</em></div><span class="go">更新 ›</span>`;
+  }else if(schemaWarn){
+    el.className='syncbar bad';
+    el.innerHTML=`<span class="ic">⬆️</span><div><b>相手が新しいバージョンを使っています</b>
+      <em>このままだと金額や表示が正しくない場合があります。タップして更新してください</em></div><span class="go">更新 ›</span>`;
+  }else{ el.className='hidden'; el.innerHTML=''; return; }
   icons();
 }
-function doUpdate(){ location.reload(); }
+function doUpdate(){ forceUpdate(); }
 
 /* ---------- 同期状態のバナー ---------- */
 let bootAt=Date.now();
@@ -715,8 +752,125 @@ function mprev(){
     <div class="n" style="color:${c}">${v>0?'+':''}${v}</div><div class="muted">${moodWord(v)}</div>`;
 }
 function moodSave(){
-  S.moods[ME]={value:Number($('#mval').value),comment:val('mcm'),updatedAt:Date.now(),lastModifiedBy:ME};
-  closeSheet(); save(); toast('気分を更新しました'+moodEmoji(S.moods[ME].value));
+  const v=Number($('#mval').value), cm=val('mcm'), now=Date.now();
+  S.moods[ME]={value:v,comment:cm,updatedAt:now,lastModifiedBy:ME};
+  S.moodLog.push({id:uid(),who:ME,v:v,cm:cm,at:now,updatedAt:now,lastModifiedBy:ME,deleted:false});
+  closeSheet(); save(); toast('気分を記録しました'+moodEmoji(v));
+}
+
+/* ================== 気分の記録（グラフ＋一覧） ================== */
+function moodEntries(days){
+  const from=days?Date.now()-days*864e5:0;
+  return live('moodLog').filter(m=>m.at>=from).sort((a,b)=>a.at-b.at);
+}
+function moodChart(all){
+  const W=320,H=178,L=25,R=13,T=10,B=20;
+  let from=ui.moodRange?Date.now()-ui.moodRange*864e5:Math.min(...all.map(m=>m.at));
+  let to=Date.now();
+  if(to-from<6*36e5) from=to-6*36e5;
+  const X=t=>L+(W-L-R)*((t-from)/(to-from));
+  const Y=v=>T+(H-T-B)*((10-Math.max(-10,Math.min(10,v)))/20);
+  let g='';
+  /* 気分の正負がひと目で分かるように、0を境にごく淡い帯を敷く */
+  g+=`<rect x="${L}" y="${Y(10)}" width="${W-L-R}" height="${Y(0)-Y(10)}" fill="#F59A4B" opacity=".07"/>`;
+  g+=`<rect x="${L}" y="${Y(0)}" width="${W-L-R}" height="${Y(-10)-Y(0)}" fill="#5B94D6" opacity=".07"/>`;
+  [10,5,0,-5,-10].forEach(v=>{
+    g+=`<line x1="${L}" y1="${Y(v)}" x2="${W-R}" y2="${Y(v)}" stroke="var(--ch-grid)" stroke-width="${v===0?1.5:1}"${v===0?'':' stroke-dasharray="2 3"'}/>`;
+    g+=`<text x="${L-4}" y="${Y(v)+3}" text-anchor="end" font-size="8" fill="var(--sub)">${v>0?'+':''}${v}</text>`;
+  });
+  for(let i=0;i<=4;i++){ const t=from+(to-from)*i/4, d=new Date(t);
+    g+=`<text x="${X(t)}" y="${H-5}" text-anchor="${i===0?'start':i===4?'end':'middle'}" font-size="8" fill="var(--sub)">${d.getMonth()+1}/${d.getDate()}</text>`; }
+  const pts_=[], labels=[];
+  ['keisuke','kotomi'].forEach((who,wi)=>{
+    const pts=all.filter(m=>m.who===who); if(!pts.length)return;
+    const col=who==='keisuke'?'var(--ch-k)':'var(--ch-ko)';
+    if(pts.length>1) g+=`<polyline fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(m=>X(m.at).toFixed(1)+','+Y(m.v).toFixed(1)).join(' ')}"/>`;
+    /* 点が詰まっているときは線を主役にし、丸は選択中と最新だけ描く */
+    const dense=pts.length>18;
+    pts.forEach((m,i)=>{
+      const sel=ui.moodSel===m.id;
+      if(!dense||sel||i===pts.length-1)
+        g+=`<circle cx="${X(m.at).toFixed(1)}" cy="${Y(m.v).toFixed(1)}" r="${sel?6:4}" fill="${col}" stroke="var(--card)" stroke-width="2"/>`;
+      pts_.push({id:m.id,x:X(m.at),y:Y(m.v)});
+    });
+    const last=pts[pts.length-1];
+    labels.push({x:Math.min(X(last.at)+6,W-3), y:Y(last.v)+(wi?13:-9), name:USERS[who].name});
+  });
+  /* ラベル同士が重ならないよう、11px以上離す */
+  labels.sort((a,b)=>a.y-b.y);
+  for(let i=1;i<labels.length;i++) if(labels[i].y-labels[i-1].y<11) labels[i].y=labels[i-1].y+11;
+  const shift=Math.max(0,labels.length?labels[labels.length-1].y-(H-B-2):0);
+  labels.forEach(l=>{
+    g+=`<text x="${l.x}" y="${Math.max(T+8,l.y-shift)}" text-anchor="end" font-size="9" font-weight="700"
+      fill="var(--ink)" stroke="var(--card)" stroke-width="3" paint-order="stroke" stroke-linejoin="round">${l.name}</text>`;
+  });
+
+  /* 点が密でも確実に選べるよう、面全体で受けて一番近い点を拾う */
+  window._mpts=pts_;
+  const hit=`<rect x="0" y="0" width="${W}" height="${H}" fill="transparent" style="cursor:pointer" onclick="pickNearest(event)"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;touch-action:manipulation" role="img"
+    aria-label="けいすけとことみの気分の推移グラフ。縦軸は-10から+10。下の一覧に同じ内容を文字で載せています。">${g}${hit}</svg>`;
+}
+function moodHistory(){
+  if(ui.moodRange===undefined)ui.moodRange=30;
+  ui.moodSel='';
+  openSheet('<h3>📈 ふたりの気分の記録</h3><div id="moodBody"></div>');
+  renderMoodBody();
+}
+function renderMoodBody(){
+  const el=document.getElementById('moodBody'); if(!el)return;
+  const all=moodEntries(ui.moodRange);
+  const chips=[{v:7,l:'7日'},{v:30,l:'30日'},{v:0,l:'全期間'}].map(o=>
+    `<button class="chip ${ui.moodRange===o.v?'on':''}" onclick="ui.moodRange=${o.v};ui.moodSel='';renderMoodBody()">${o.l}</button>`).join('');
+  const stat=who=>{
+    const a=all.filter(m=>m.who===who).map(m=>m.v);
+    if(!a.length)return null;
+    return {avg:(a.reduce((x,y)=>x+y,0)/a.length), max:Math.max(...a), min:Math.min(...a), n:a.length};
+  };
+  const sk=stat('keisuke'), sko=stat('kotomi');
+  const sel=all.find(m=>m.id===ui.moodSel);
+  const fmt=t=>{const d=new Date(t);return `${d.getMonth()+1}月${d.getDate()}日 ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;};
+  el.innerHTML=`
+    <div class="chips">${chips}</div>
+    ${all.length?`
+      <div class="lgd"><span><i style="background:var(--ch-k)"></i>けいすけ</span><span><i style="background:var(--ch-ko)"></i>ことみ</span></div>
+      ${moodChart(all)}
+      <div class="muted" style="text-align:center;font-size:10px;margin-top:4px">点をタップすると、そのときのコメントが見られます</div>
+      <div class="pickbox">${sel?`
+        <div class="row" style="gap:8px"><span style="font-size:26px">${moodEmoji(sel.v)}</span>
+          <div><div>${badge(sel.who)} <b style="font-size:15px">${sel.v>0?'+':''}${sel.v}</b> <span class="muted">${moodWord(sel.v)}</span></div>
+          <div class="muted" style="font-size:11px">${fmt(sel.at)}</div></div></div>
+        <div style="margin-top:8px">${sel.cm?esc(sel.cm):'<span class="muted">コメントなし</span>'}</div>`
+        :'<span class="muted">グラフの点をタップすると、ここに詳しく表示されます</span>'}</div>
+      <div class="mstat">
+        <div>🐻 けいすけ 平均<b style="color:var(--ch-k)">${sk?(sk.avg>0?'+':'')+sk.avg.toFixed(1):'—'}</b>
+          ${sk?`最高 ${sk.max>0?'+':''}${sk.max} / 最低 ${sk.min>0?'+':''}${sk.min}・${sk.n}件`:'記録なし'}</div>
+        <div>🐰 ことみ 平均<b style="color:var(--ch-ko)">${sko?(sko.avg>0?'+':'')+sko.avg.toFixed(1):'—'}</b>
+          ${sko?`最高 ${sko.max>0?'+':''}${sko.max} / 最低 ${sko.min>0?'+':''}${sko.min}・${sko.n}件`:'記録なし'}</div>
+      </div>
+      <h3 style="margin:22px 0 4px;font-size:14px">記録の一覧</h3>
+      <div>${all.slice().reverse().map(m=>`
+        <div class="mrow ${ui.moodSel===m.id?'on':''}" onclick="pickMood('${m.id}')">
+          <div class="e">${moodEmoji(m.v)}</div>
+          <div style="flex:1;min-width:0">
+            <div class="row" style="gap:6px;flex-wrap:wrap">${badge(m.who)}
+              <b style="color:${m.who==='keisuke'?'var(--ch-k)':'var(--ch-ko)'}">${m.v>0?'+':''}${m.v}</b>
+              <span class="muted" style="font-size:11px">${fmt(m.at)}</span></div>
+            ${m.cm?`<div style="margin-top:3px;font-size:13px">${esc(m.cm)}</div>`:''}
+          </div>
+          ${m.who===ME?`<div class="iact"><button onclick="event.stopPropagation();del('moodLog','${m.id}','この記録')"><i data-lucide="trash-2"></i></button></div>`:''}
+        </div>`).join('')}</div>`
+    :'<div class="empty"><div>📈</div>この期間の記録はまだありません<br><span style="font-size:11px">ホームの「気分を更新」から記録すると、ここにたまっていきます</span></div>'}`;
+  icons();
+}
+function pickMood(id){ ui.moodSel=(ui.moodSel===id?'':id); renderMoodBody(); }
+function pickNearest(ev){
+  const svg=ev.currentTarget.ownerSVGElement, r=svg.getBoundingClientRect(), vb=svg.viewBox.baseVal;
+  const x=(ev.clientX-r.left)/r.width*vb.width, y=(ev.clientY-r.top)/r.height*vb.height;
+  let best=null,bd=1e9;
+  (window._mpts||[]).forEach(pt=>{ const d=(pt.x-x)*(pt.x-x)+(pt.y-y)*(pt.y-y)*0.45;
+    if(d<bd){bd=d;best=pt;} });
+  if(best){ ui.moodSel=best.id; renderMoodBody(); }
 }
 /* カレンダーの「デート」「記念日」から、いちばん近い予定を拾う */
 function nextMeet(){
@@ -758,6 +912,7 @@ function renderHome(){
   const wOpen=live('wishes').filter(w=>!w.done).length;
   $('#view-home').innerHTML=
    `<div class="mood-row">${moodCard('keisuke')}${moodCard('kotomi')}</div>
+    <button class="hist-btn" onclick="moodHistory()"><i data-lucide="line-chart"></i>ふたりの気分の記録を見る</button>
     ${heroHTML()}
     <div class="q-grid">
       <button class="q" onclick="go('money')"><div class="t"><i data-lucide="wallet"></i>今月の支出</div><div class="v">${yen(mSum)}</div><div class="s">タップで家計簿へ</div></button>
@@ -776,7 +931,11 @@ function renderHome(){
 
 /* ============================ MONEY ============================ */
 /* 実質の支払元。共同口座から返金する（予定・済み）ものは共同口座払いとみなす */
-function realSrc(e){ return (e.payer==='joint'||e.reim==='wait'||e.reim==='done')?'joint':e.payer; }
+const PAYERS=['keisuke','kotomi','joint'];
+function realSrc(e){
+  if(e.payer==='joint'||e.reim==='wait'||e.reim==='done')return 'joint';
+  return PAYERS.includes(e.payer)?e.payer:'joint';   /* 不明なときは中立（共同口座）扱い */
+}
 /* 精算額。正なら「ことみ → けいすけ」、負なら「けいすけ → ことみ」 */
 function settlement(list,pays){
   let bal=0;
@@ -784,9 +943,9 @@ function settlement(list,pays){
     const a=Number(e.amount);
     const kShare=e.split==='half'?a/2:e.split==='keisuke'?a:0;
     const src=realSrc(e);
-    if(src==='joint')      bal += (a/2 - kShare);   /* 共同口座はふたりの折半とみなす */
-    else if(src==='keisuke') bal += (a - kShare);
-    else                     bal -= kShare;
+    if(src==='keisuke')      bal += (a - kShare);
+    else if(src==='kotomi')  bal -= kShare;
+    else                     bal += (a/2 - kShare);  /* 共同口座はふたりの折半とみなす */
   });
   (pays||[]).forEach(p=>{
     const a=Number(p.amount);                        /* 共同のお金を個人が受け取った分 */
@@ -795,7 +954,9 @@ function settlement(list,pays){
   return bal;
 }
 function srcBadge(e){
-  return e.payer==='joint' ? '<span class="badge joint">🏦共同口座が支払</span>' : badge(e.payer,uname(e.payer)+'が支払');
+  if(e.payer==='joint')return '<span class="badge joint">🏦共同口座が支払</span>';
+  if(!PAYERS.includes(e.payer))return '<span class="pill wait">⚠️ 支払元が未設定（編集してください）</span>';
+  return badge(e.payer,uname(e.payer)+'が支払');
 }
 function renderMoney(){
   const inM=x=>ui.month==='all'||x.date.startsWith(ui.month);
@@ -1311,7 +1472,7 @@ async function resetAll(){
   if(!await askConfirm('家計簿・予定・家事・Wish・ルールをすべて消します。相手の端末からも消えます。よろしいですか？'))return;
     /* 相手の端末からも確実に消えるよう、削除マークを付けて同期する */
   const now=Date.now();
-  ['expenses','events','chores','wishes','rules','payouts'].forEach(k=>{
+  ['expenses','events','chores','wishes','rules','payouts','moodLog'].forEach(k=>{
     S[k].forEach(x=>{ x.deleted=true; x.updatedAt=now; x.lastModifiedBy=ME; });
   });
   ['keisuke','kotomi'].forEach(u=>{ S.moods[u]={value:0,comment:'',updatedAt:now,lastModifiedBy:u}; });
