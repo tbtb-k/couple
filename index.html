@@ -35,7 +35,7 @@ button{cursor:pointer;border:none;background:none}
 .hidden{display:none !important}
 i[data-lucide]{width:1em;height:1em;stroke-width:2.2;display:inline-block}
 i[data-lucide]:empty:before{font-style:normal;font-size:.95em}
-i[data-lucide="home"]:empty:before{content:"🏠"} i[data-lucide="wallet"]:empty:before{content:"💰"}
+i[data-lucide="home"]:empty:before{content:"🏠"} i[data-lucide="wallet"]:empty:before{content:"💰"} i[data-lucide="landmark"]:empty:before{content:"🏦"}
 i[data-lucide="calendar-days"]:empty:before,i[data-lucide="calendar-clock"]:empty:before{content:"📅"}
 i[data-lucide="list-checks"]:empty:before{content:"🧹"} i[data-lucide="heart"]:empty:before{content:"💗"}
 i[data-lucide="scroll-text"]:empty:before{content:"📝"} i[data-lucide="settings"]:empty:before{content:"⚙"}
@@ -347,7 +347,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:11px;word-
   </main>
   <nav class="tabbar" id="tabbar">
     <button data-t="home"><i data-lucide="home"></i>ホーム</button>
-    <button data-t="money"><i data-lucide="wallet"></i>家計簿</button>
+    <button data-t="money"><i data-lucide="landmark"></i>共同口座</button>
     <button data-t="cal"><i data-lucide="calendar-days"></i>予定</button>
     <button data-t="chore"><i data-lucide="list-checks"></i>家事</button>
     <button data-t="wish"><i data-lucide="heart"></i>やりたい</button>
@@ -370,8 +370,8 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='2.2（2026-08-23）';
-const SCHEMA=4;   /* データ形式の版。項目を増やしたら +1 する */
+const APP_VERSION='2.3（2026-08-23）';
+const SCHEMA=5;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
 const SAMPLE={
@@ -465,16 +465,35 @@ function seed(){
       keisuke:{value:0,comment:'',updatedAt:0,lastModifiedBy:'keisuke'},
       kotomi :{value:0,comment:'',updatedAt:0,lastModifiedBy:'kotomi'}
     },
-    expenses:[], events:[], chores:[], wishes:[], rules:[], payouts:[], moodLog:[]
+    expenses:[], events:[], chores:[], wishes:[], rules:[], payouts:[], moodLog:[], ledger:[]
   };
 }
 function ensure(s){
   const base=seed();
   if(!s)return base;
-  ['expenses','events','chores','wishes','rules','payouts','moodLog'].forEach(k=>{ if(!Array.isArray(s[k]))s[k]=[]; });
+  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger'].forEach(k=>{ if(!Array.isArray(s[k]))s[k]=[]; });
   s.schema=Math.max(Number(s.schema)||1,SCHEMA);
   s.settings=Object.assign({},base.settings,s.settings||{});
   s.settings.payday=Object.assign({},base.settings.payday,s.settings.payday||{});
+  /* v2.3：家計簿 → 共同口座の通帳へ移行 */
+  (function(){
+    const have=new Set(s.ledger.map(x=>x.id));
+    const add=(src,o)=>{ const id='m_'+src.id; if(have.has(id))return;
+      s.ledger.push(Object.assign({id,deleted:!!src.deleted,updatedAt:src.updatedAt||Date.now(),
+        lastModifiedBy:src.lastModifiedBy||'keisuke',who:'',cat:'',paidBy:'',reim:'',to:''},o)); have.add(id); };
+    (s.expenses||[]).forEach(e=>{
+      const base={date:e.date,title:e.title,amount:e.amount};
+      if(e.split==='joint'&&e.payer!=='joint')      add(e,Object.assign({type:'in',who:e.payer},base));
+      else if(e.payer==='joint')                    add(e,Object.assign({type:'out',paidBy:'joint',cat:e.cat},base));
+      else if(e.reim==='wait'||e.reim==='done')     add(e,Object.assign({type:'out',paidBy:e.payer,reim:e.reim,cat:e.cat},base));
+      else                                          add(e,Object.assign({type:'personal',cat:e.cat},base));
+    });
+    (s.payouts||[]).forEach(q=>add(q,{type:'back',to:q.to,date:q.date,title:q.memo||'払い戻し',amount:q.amount}));
+    /* 移行済みの元データには削除マークを付ける（相手の端末にも伝わる） */
+    const nw=Date.now();
+    (s.expenses||[]).forEach(e=>{ if(!e.deleted){e.deleted=true;e.updatedAt=nw;} });
+    (s.payouts||[]).forEach(q=>{ if(!q.deleted){q.deleted=true;q.updatedAt=nw;} });
+  })();
   if(s.settings.jointInit===undefined)s.settings.jointInit=500000;
   s.moods=Object.assign({},base.moods,s.moods||{});
   /* 既存の「いまの気分」を履歴の最初の1件として引き継ぐ（初回のみ） */
@@ -501,14 +520,14 @@ function mergeState(remote){
   if(!remote)return;
   /* 相手がこちらの知らない形式を使っていたら警告（データは触らない） */
   if(Number(remote.schema||1)>SCHEMA){ schemaWarn=true; setTimeout(showUpdBar,50); }
-  ['expenses','events','chores','wishes','rules','payouts','moodLog'].forEach(k=>{ S[k]=mergeArr(S[k],remote[k]); });
+  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger'].forEach(k=>{ S[k]=mergeArr(S[k],remote[k]); });
   ['keisuke','kotomi'].forEach(u=>{
     const r=remote.moods&&remote.moods[u]; if(r&&(r.updatedAt||0)>(S.moods[u].updatedAt||0)) S.moods[u]=r;
   });
   if(remote.settings&&(remote.settings.updatedAt||0)>(S.settings.updatedAt||0)) S.settings=remote.settings;
   // 30日以上前の削除済みを掃除
   const cut=Date.now()-30*864e5;
-  ['expenses','events','chores','wishes','rules','payouts','moodLog'].forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
+  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger'].forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
 }
 const live=k=>(S[k]||[]).filter(x=>!x.deleted);
 
@@ -920,7 +939,9 @@ function heroHTML(){
 }
 function renderHome(){
   const th=todayY().slice(0,7);
-  const mSum=live('expenses').filter(e=>e.date.startsWith(th)).reduce((a,b)=>a+Number(b.amount),0);
+  const mOut=live('ledger').filter(x=>(x.type==='out'||x.type==='back')&&x.date.startsWith(th))
+    .reduce((a,b)=>a+Number(b.amount),0);
+  const jbal=jointBalance();
   const undone=live('chores').filter(c=>!c.done).length;
   const nextEv=live('events').concat(paydaysBetween(todayY(),ymd(addDays(new Date(),120))))
     .filter(e=>evEnd(e)>=todayY()).sort((a,b)=>a.date.localeCompare(b.date))[0];
@@ -930,7 +951,9 @@ function renderHome(){
     <button class="hist-btn" onclick="moodHistory()"><i data-lucide="line-chart"></i>ふたりの気分の記録を見る</button>
     ${heroHTML()}
     <div class="q-grid">
-      <button class="q" onclick="go('money')"><div class="t"><i data-lucide="wallet"></i>今月の支出</div><div class="v">${yen(mSum)}</div><div class="s">タップで家計簿へ</div></button>
+      <button class="q" onclick="go('money')"><div class="t"><i data-lucide="landmark"></i>共同口座の残高</div>
+        <div class="v">${ui.showBal?yen(jbal.bal):'¥ ●●●,●●●'}</div>
+        <div class="s">今月の支出 ${yen(mOut)}</div></button>
       <button class="q" onclick="go('chore')"><div class="t"><i data-lucide="list-checks"></i>残っている家事</div><div class="v">${undone}件</div><div class="s">${!live('chores').length?'タスクを追加しよう':undone?'ふぁいと！':'ぜんぶ完了🎉'}</div></button>
       <button class="q" onclick="go('cal')"><div class="t"><i data-lucide="calendar-days"></i>次の予定</div><div class="v" style="font-size:14px">${nextEv?esc(nextEv.title):'なし'}</div><div class="s">${nextEv?nextEv.date.slice(5).replace('-','/')+(nextEv.time?' '+nextEv.time:''):'予定を追加しよう'}</div></button>
       <button class="q" onclick="go('wish')"><div class="t"><i data-lucide="heart"></i>やりたいこと</div><div class="v">${wOpen}件</div><div class="s">${live('wishes').length?'達成待ち':'追加してみよう'}</div></button>
@@ -946,37 +969,6 @@ function renderHome(){
 
 /* ============================ MONEY ============================ */
 /* 実質の支払元。共同口座から返金する（予定・済み）ものは共同口座払いとみなす */
-const PAYERS=['keisuke','kotomi','joint'];
-function realSrc(e){
-  if(e.payer==='joint'||e.reim==='wait'||e.reim==='done')return 'joint';
-  return PAYERS.includes(e.payer)?e.payer:'joint';   /* 不明なときは中立（共同口座）扱い */
-}
-/* けいすけの取り分。half と joint（共同口座＝ふたりの折半）はどちらも半分 */
-function shareK(kind,a){ return kind==='keisuke'?a:kind==='kotomi'?0:a/2; }
-/* 精算額。正なら「ことみ → けいすけ」、負なら「けいすけ → ことみ」
-   ＝ けいすけが出した分 − けいすけが負担した分 */
-function settlement(list,pays){
-  let bal=0;
-  list.forEach(e=>{ const a=Number(e.amount); bal += shareK(realSrc(e),a) - shareK(e.split,a); });
-  (pays||[]).forEach(p=>{ const a=Number(p.amount); bal += shareK('joint',a) - shareK(p.to,a); });
-  return bal;
-}
-/* 支払元が個人で負担が共同口座 ＝ 共同口座への入金 */
-const isDeposit=e=>e.split==='joint'&&e.payer!=='joint';
-/* 共同口座の残高（全期間で計算） */
-function jointBalance(){
-  const init=Number(S.settings.jointInit)||0;
-  let inA=0,outA=0,pend=0;
-  live('expenses').forEach(e=>{
-    const a=Number(e.amount);
-    if(isDeposit(e)) inA+=a;
-    if(e.payer==='joint') outA+=a;
-    else if(e.reim==='done') outA+=a;
-    else if(e.reim==='wait') pend+=a;
-  });
-  live('payouts').forEach(p=>outA+=Number(p.amount));
-  return {init,inA,outA,pend,bal:init+inA-outA};
-}
 /* 給料日（毎月◯日。土日ならその前の金曜日へ） */
 function paydayDate(y,m){
   const c=S.settings.payday||{};
@@ -998,33 +990,63 @@ function paydaysBetween(fromY,toY){
   }
   return out;
 }
-function srcBadge(e){
-  if(e.payer==='joint')return '<span class="badge joint">🏦共同口座が支払</span>';
-  if(!PAYERS.includes(e.payer))return '<span class="pill wait">⚠️ 支払元が未設定（編集してください）</span>';
-  return badge(e.payer,uname(e.payer)+'が支払');
+/* ================== 共同口座の通帳 ==================
+   ledger: {type:'in'|'out'|'back'|'personal', date, title, amount,
+            who   … in のとき入れた人
+            cat   … out のときカテゴリ
+            paidBy… out のとき 'joint'|'keisuke'|'kotomi'
+            reim  … out で立替のとき ''|'wait'|'done'
+            to    … back のとき受け取った人 }                        */
+const LED=()=>live('ledger');
+function jointBalance(){
+  const init=Number(S.settings.jointInit)||0;
+  let inA=0,outA=0,back=0,pend=0;
+  LED().forEach(x=>{
+    const a=Number(x.amount)||0;
+    if(x.type==='in') inA+=a;
+    else if(x.type==='back') back+=a;
+    else if(x.type==='out'){
+      if(x.paidBy==='joint'||x.reim==='done') outA+=a;   /* 口座からお金が出た */
+      else pend+=a;                                      /* 立替のまま。まだ出ていない */
+    }
+  });
+  return {init,inA,outA,back,pend,bal:init+inA-outA-back};
+}
+function ledIcon(x){
+  if(x.type==='in')   return `<span class="badge joint">🏦 入金</span>${badge(x.who,uname(x.who)+'から')}`;
+  if(x.type==='back') return `<span class="badge joint">🏦 払い戻し</span>${badge(x.to,uname(x.to)+'へ')}`;
+  return x.paidBy==='joint' ? '<span class="badge joint">🏦 口座から支払</span>'
+       : badge(x.paidBy,uname(x.paidBy)+'が立替');
 }
 function renderMoney(){
   const inM=x=>ui.month==='all'||x.date.startsWith(ui.month);
-  const list=live('expenses').filter(inM).sort((a,b)=>b.date.localeCompare(a.date)||b.updatedAt-a.updatedAt);
-  const pays=live('payouts').filter(inM).sort((a,b)=>b.date.localeCompare(a.date));
-  const sum=arr=>arr.reduce((a,b)=>a+Number(b.amount),0);
-  const exp=list.filter(e=>!isDeposit(e)), deps=list.filter(isDeposit);
-  const tot=sum(exp), depTot=sum(deps);
-  const byK=sum(exp.filter(e=>e.payer==='keisuke')), byKo=sum(exp.filter(e=>e.payer==='kotomi')),
-        byJ=sum(exp.filter(e=>e.payer==='joint'));
+  const all=LED().filter(x=>x.type!=='personal');
+  const list=all.filter(inM).sort((a,b)=>b.date.localeCompare(a.date)||b.updatedAt-a.updatedAt);
+  const sum=arr=>arr.reduce((a,b)=>a+(Number(b.amount)||0),0);
+  const mIn=sum(list.filter(x=>x.type==='in'));
+  const mOut=sum(list.filter(x=>x.type==='out'));
+  const mBack=sum(list.filter(x=>x.type==='back'));
+  const inK=sum(list.filter(x=>x.type==='in'&&x.who==='keisuke'));
+  const inKo=sum(list.filter(x=>x.type==='in'&&x.who==='kotomi'));
   const jb=jointBalance();
-  const bal=settlement(list,pays);
-  /* 返金待ちは月をまたぐので全期間で集計 */
-  const wait=live('expenses').filter(e=>e.reim==='wait'&&e.payer!=='joint');
-  const wK=sum(wait.filter(e=>e.payer==='keisuke')), wKo=sum(wait.filter(e=>e.payer==='kotomi'));
-  const settle = Math.abs(bal)<1
-    ? `<div style="color:var(--ok)">✅ 貸し借りなし！ぴったりです</div>`
-    : bal>0 ? `${USERS.kotomi.emoji} ことみ → けいすけ ${USERS.keisuke.emoji}<br><span class="amt">${yen(bal)}</span>`
-            : `${USERS.keisuke.emoji} けいすけ → ことみ ${USERS.kotomi.emoji}<br><span class="amt">${yen(-bal)}</span>`;
+  const wait=all.filter(x=>x.type==='out'&&x.paidBy!=='joint'&&x.reim==='wait');
+  const wK=sum(wait.filter(x=>x.paidBy==='keisuke')), wKo=sum(wait.filter(x=>x.paidBy==='kotomi'));
+  const old=LED().filter(x=>x.type==='personal').length;
   const [y,m]=(ui.month==='all'?todayY().slice(0,7):ui.month).split('-');
   $('#view-money').innerHTML=
-   `<div class="sec-head"><h2><i data-lucide="wallet"></i>共同家計簿</h2>
-      <button class="btn sm sp" onclick="expSheet()"><i data-lucide="plus"></i>支出を追加</button></div>
+   `<div class="sec-head"><h2><i data-lucide="landmark"></i>共同口座</h2>
+      <button class="btn sm sp" onclick="ledSheet()"><i data-lucide="plus"></i>記録する</button></div>
+
+    <div class="balcard">
+      <div class="hd">🏦 いまの残高
+        <button class="eye" onclick="ui.showBal=!ui.showBal;render()" aria-label="残高の表示切替">
+          <i data-lucide="${ui.showBal?'eye-off':'eye'}"></i></button></div>
+      <div class="big">${ui.showBal?yen(jb.bal):'<span class="hid">¥ ●●●,●●●</span>'}</div>
+      ${ui.showBal?`<div class="sub">初期残高 ${yen(jb.init)}　入金 +${yen(jb.inA)}　支払い −${yen(jb.outA)}${jb.back?'　払い戻し −'+yen(jb.back):''}
+        ${jb.pend?`<br>⏳ 立て替え分 ${yen(jb.pend)} を振り込むと ${yen(jb.bal-jb.pend)}`:''}</div>`
+       :`<div class="sub">目のマークをタップすると表示されます</div>`}
+    </div>
+
     <div class="card">
       <div class="navmonth">
         <button onclick="mvMonth(-1)"><i data-lucide="chevron-left"></i></button>
@@ -1033,29 +1055,21 @@ function renderMoney(){
       </div>
       <div style="text-align:center"><button class="chip ${ui.month==='all'?'on':''}" onclick="ui.month=(ui.month==='all'?todayY().slice(0,7):'all');render()">全期間で見る</button></div>
       <div class="sum">
-        <div><span class="muted">支出合計</span><b>${yen(tot)}</b></div>
-        <div><span class="muted">🏦 共同口座へ入金</span><b class="dep">${depTot?'+'+yen(depTot):'—'}</b></div>
-        <div style="background:var(--k-bg)"><span class="muted">🐻 けいすけ払い</span><b style="color:var(--k)">${yen(byK)}</b></div>
-        <div style="background:var(--ko-bg)"><span class="muted">🐰 ことみ払い</span><b style="color:var(--ko)">${yen(byKo)}</b></div>
-        <div style="grid-column:1/-1;background:#E7F4EE"><span class="muted">🏦 共同口座から</span><b style="color:#2C7F63">${yen(byJ)}</b></div>
+        <div style="background:#E7F4EE"><span class="muted">入金</span><b class="dep">+${yen(mIn)}</b></div>
+        <div><span class="muted">使ったお金</span><b>−${yen(mOut+mBack)}</b></div>
       </div>
-      <div class="settle"><div class="muted" style="font-weight:700;margin-bottom:2px">個人どうしの精算</div>${settle}</div>
-      <div class="muted" style="font-size:11px;margin-top:8px;text-align:center">共同口座のお金は、ふたりのもの（折半）として計算しています</div>
-    </div>
-
-    <div class="balcard">
-      <div class="hd">🏦 共同口座の残高
-        <button class="eye" onclick="ui.showBal=!ui.showBal;render()" aria-label="残高の表示切替">
-          <i data-lucide="${ui.showBal?'eye-off':'eye'}"></i></button></div>
-      <div class="big">${ui.showBal?yen(jb.bal):'<span class="hid">¥ ●●●,●●●</span>'}</div>
-      ${ui.showBal?`<div class="sub">初期残高 ${yen(jb.init)}　入金 +${yen(jb.inA)}　支出 −${yen(jb.outA)}
-        ${jb.pend?`<br>返金待ち −${yen(jb.pend)} を振り込むと ${yen(jb.bal-jb.pend)}`:''}</div>`
-       :`<div class="sub">目のマークをタップすると表示されます</div>`}
+      <div class="settle"><div class="muted" style="font-weight:700;margin-bottom:2px">この期間の増減</div>
+        <span class="amt" style="color:${mIn-mOut-mBack>=0?'var(--ok)':'var(--accent)'}">${mIn-mOut-mBack>=0?'+':'−'}${yen(Math.abs(mIn-mOut-mBack))}</span></div>
+      <div class="sum" style="margin-bottom:0">
+        <div style="background:var(--k-bg)"><span class="muted">🐻 けいすけの入金</span><b style="color:var(--k)">${yen(inK)}</b></div>
+        <div style="background:var(--ko-bg)"><span class="muted">🐰 ことみの入金</span><b style="color:var(--ko)">${yen(inKo)}</b></div>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:8px;text-align:center">「使ったお金」は立て替え分も、使った日で数えています</div>
     </div>
 
     ${(wK||wKo)?`<div class="card" style="border:1.5px solid #F0C98B">
-      <div class="sec-head"><h2>🏦 共同口座から返す予定</h2></div>
-      <div class="muted" style="margin-bottom:10px">個人のお金で立て替えた分です。共同口座から振り込んだら「振込済み」にしてください。</div>
+      <div class="sec-head"><h2>⏳ 共同口座から返す予定</h2></div>
+      <div class="muted" style="margin-bottom:10px">個人のお金で立て替えた分です。共同口座から振り込んだら「振込済み」にすると、残高に反映されます。</div>
       ${wK?`<div class="item"><div style="flex:1">${badge('keisuke')} へ返金</div>
         <div style="text-align:right"><div class="amt-r">${yen(wK)}</div>
         <button class="btn sm line" style="margin-top:4px" onclick="markPaid('keisuke')">振込済みにする</button></div></div>`:''}
@@ -1065,115 +1079,107 @@ function renderMoney(){
     </div>`:''}
 
     <div class="card">
-      <div class="sec-head"><h2><i data-lucide="receipt-text"></i>支出・入金の履歴</h2></div>
-      ${list.length?list.map(e=>`<div class="item">
+      <div class="sec-head"><h2><i data-lucide="receipt-text"></i>入出金の履歴</h2></div>
+      ${list.length?list.map(x=>`<div class="item">
           <div style="width:40px;flex-shrink:0;text-align:center">
-            <div style="font-size:15px;font-weight:800;line-height:1.1">${Number(e.date.slice(8))}</div>
-            <div class="muted" style="font-size:10px">${Number(e.date.slice(5,7))}月</div></div>
+            <div style="font-size:15px;font-weight:800;line-height:1.1">${Number(x.date.slice(8))}</div>
+            <div class="muted" style="font-size:10px">${Number(x.date.slice(5,7))}月</div></div>
           <div style="min-width:0;flex:1">
-            <div style="font-weight:700;font-size:14px">${esc(e.title)}</div>
+            <div style="font-weight:700;font-size:14px">${esc(x.title)}</div>
             <div class="row" style="gap:5px;flex-wrap:wrap;margin-top:4px">
-              <span class="pill">${esc(e.cat)}</span>
-              ${srcBadge(e)}
-              <span class="pill">${e.split==='half'?'折半':e.split==='keisuke'?'けいすけ負担':e.split==='joint'?'🏦 共同口座へ':'ことみ負担'}</span>
-              ${e.reim==='wait'?'<span class="pill wait">🏦 返金待ち</span>':''}
-              ${e.reim==='done'?'<span class="pill paid">🏦 共同口座から返済済み</span>':''}
+              ${x.cat?`<span class="pill">${esc(x.cat)}</span>`:''}
+              ${ledIcon(x)}
+              ${x.reim==='wait'?'<span class="pill wait">⏳ 返金待ち</span>':''}
+              ${x.reim==='done'?'<span class="pill paid">✔ 返金済み</span>':''}
             </div>
-            <div style="margin-top:5px">${editedBy(e)}</div>
+            <div style="margin-top:5px">${editedBy(x)}</div>
           </div>
           <div style="text-align:right">
-            <div class="amt-r ${isDeposit(e)?'dep':''}">${isDeposit(e)?'+':''}${yen(e.amount)}</div>
-            <div class="iact"><button onclick="expSheet('${e.id}')"><i data-lucide="pencil"></i></button>
-              <button onclick="del('expenses','${e.id}','この支出')"><i data-lucide="trash-2"></i></button></div>
+            <div class="amt-r ${x.type==='in'?'dep':''}">${x.type==='in'?'+':'−'}${yen(x.amount)}</div>
+            <div class="iact"><button onclick="ledSheet('${x.id}')"><i data-lucide="pencil"></i></button>
+              <button onclick="del('ledger','${x.id}','この記録')"><i data-lucide="trash-2"></i></button></div>
           </div></div>`).join('')
-      :'<div class="empty"><div>🧾</div>この期間の支出はまだありません</div>'}
+      :'<div class="empty"><div>🏦</div>この期間の記録はまだありません<br><span style="font-size:11px">右上の「記録する」から追加できます</span></div>'}
     </div>
 
-    <div class="card">
-      <div class="sec-head"><h2>🏦 共同口座からの払い戻し</h2>
-        <button class="btn sm ghost sp" onclick="payoutSheet()"><i data-lucide="plus"></i>追加</button></div>
-      <div class="muted" style="margin-bottom:8px;font-size:11px">共同口座から個人口座にお金を戻したときの記録です（立て替えの返金は上の「返す予定」から行ってください）。</div>
-      ${pays.length?pays.map(p=>`<div class="item">
-        <div style="width:40px;flex-shrink:0;text-align:center">
-          <div style="font-size:15px;font-weight:800;line-height:1.1">${Number(p.date.slice(8))}</div>
-          <div class="muted" style="font-size:10px">${Number(p.date.slice(5,7))}月</div></div>
-        <div style="min-width:0;flex:1">
-          <div class="row" style="gap:5px;flex-wrap:wrap">
-            <span class="badge joint">🏦共同口座</span><span class="muted">→</span>${badge(p.to)}</div>
-          ${p.memo?`<div class="muted" style="margin-top:3px">${esc(p.memo)}</div>`:''}
-          <div style="margin-top:5px">${editedBy(p)}</div>
-        </div>
-        <div style="text-align:right"><div class="amt-r">${yen(p.amount)}</div>
-          <div class="iact"><button onclick="payoutSheet('${p.id}')"><i data-lucide="pencil"></i></button>
-            <button onclick="del('payouts','${p.id}','この払い戻し')"><i data-lucide="trash-2"></i></button></div></div>
-      </div>`).join(''):'<div class="empty" style="padding:16px"><div>🏦</div>払い戻しの記録はありません</div>'}
-    </div>`;
+    ${old?`<div class="card"><div class="muted" style="font-size:12px">
+      共同口座に関係のない個人の支出が ${old}件 残っています（画面には出していません）。
+      <button class="btn sm line" style="margin-top:8px" onclick="clearPersonal()">まとめて削除する</button></div></div>`:''}`;
 }
 async function markPaid(who){
-  const t=live('expenses').filter(e=>e.reim==='wait'&&e.payer===who);
+  const t=LED().filter(x=>x.type==='out'&&x.paidBy===who&&x.reim==='wait');
   const amt=t.reduce((a,b)=>a+Number(b.amount),0);
-  if(!await askConfirm(uname(who)+'さんへ '+yen(amt)+' を共同口座から振り込みましたか？'))return;
-  t.forEach(e=>{ e.reim='done'; touch(e); });
+  if(!await askConfirm(uname(who)+'さんへ '+yen(amt)+' を共同口座から振り込みましたか？\n残高から差し引かれます。'))return;
+  t.forEach(x=>{ x.reim='done'; touch(x); });
   save(); toast('振込済みにしました');
 }
-function payoutSheet(id){
-  const p=id?live('payouts').find(x=>x.id===id):null;
-  openSheet(`<h3>🏦 共同口座からの払い戻し</h3>
-    <div class="help" style="margin-bottom:12px">共同口座から個人の口座にお金を戻した記録です。
-      共同のお金をひとりが受け取ることになるため、個人どうしの精算にも反映されます。</div>
-    <label class="f"><span>受け取った人</span>${seg('pto',[{v:'keisuke',l:'🐻 けいすけ'},{v:'kotomi',l:'🐰 ことみ'}],p?p.to:ME)}</label>
-    <label class="f"><span>金額（円）</span><input class="inp" id="pAmt" type="number" inputmode="numeric" placeholder="0" value="${p?p.amount:''}"></label>
-    <label class="f"><span>日付</span><input class="inp" id="pDate" type="date" value="${p?p.date:todayY()}"></label>
-    <label class="f"><span>メモ（任意）</span><input class="inp" id="pMemo" placeholder="例：使わなかった分を戻した" value="${esc(p?p.memo:'')}"></label>
-    <button class="btn" onclick="payoutSave('${id||''}')"><i data-lucide="check"></i>保存する</button>`);
-}
-function payoutSave(id){
-  const a=Number(val('pAmt'));
-  if(!a||a<=0){toast('金額を入力してね');return;}
-  const o={to:segVal('pto'),amount:a,date:val('pDate')||todayY(),memo:val('pMemo')};
-  if(id){const x=S.payouts.find(v=>v.id===id);Object.assign(x,o);touch(x);}
-  else S.payouts.push(touch(Object.assign({id:uid(),deleted:false},o)));
-  closeSheet(); save(); toast(id?'更新しました':'払い戻しを記録しました');
+async function clearPersonal(){
+  if(!await askConfirm('共同口座に関係のない個人の支出をすべて削除します。よろしいですか？'))return;
+  S.ledger.forEach(x=>{ if(x.type==='personal'&&!x.deleted){x.deleted=true;touch(x);} });
+  save(); toast('削除しました');
 }
 function mvMonth(n){
   if(ui.month==='all')ui.month=todayY().slice(0,7);
   const [y,m]=ui.month.split('-').map(Number); const d=new Date(y,m-1+n,1);
   ui.month=d.getFullYear()+'-'+pad2(d.getMonth()+1); render();
 }
-function expSheet(id){
-  const e=id?live('expenses').find(x=>x.id===id):null;
-  openSheet(`<h3><i data-lucide="wallet"></i>${e?'支出を編集':'支出を追加'}</h3>
-    <label class="f"><span>項目名</span><input class="inp" id="eTitle" placeholder="例：スーパーで買い出し" value="${esc(e?e.title:'')}"></label>
-    <label class="f"><span>金額（円）</span><input class="inp" id="eAmt" type="number" inputmode="numeric" placeholder="0" value="${e?e.amount:''}"></label>
-    <label class="f"><span>日付</span><input class="inp" id="eDate" type="date" value="${e?e.date:todayY()}"></label>
-    <label class="f"><span>カテゴリ</span><select class="inp" id="eCat">${EXP_CAT.map(c=>`<option ${e&&e.cat===c?'selected':''}>${c}</option>`).join('')}</select></label>
-    <label class="f"><span>どこから払った？</span>
-      ${seg('payer',[{v:'keisuke',l:'🐻 けいすけ'},{v:'kotomi',l:'🐰 ことみ'},{v:'joint',l:'🏦 共同口座'}],e?e.payer:ME,'expToggleReim')}</label>
-    <label class="f"><span>負担するのは？</span>
-      ${seg('split',[{v:'half',l:'折半'},{v:'keisuke',l:'けいすけ'},{v:'kotomi',l:'ことみ'},{v:'joint',l:'🏦 共同口座'}],e?e.split:'half','expToggleReim')}
-      <span class="muted" style="font-size:11px;display:block;margin-top:5px">給料日などに「けいすけ → 共同口座」へお金を入れるときは、
-        支払元をけいすけ、負担を🏦共同口座にすると入金として記録されます。</span></label>
-    <div id="reimBox"><label class="f"><span>共同口座から返してもらう？</span>
-      ${seg('reim',[{v:'',l:'しない'},{v:'wait',l:'返金待ち'},{v:'done',l:'振込済み'}],e?(e.reim||''):'')}</label>
-      <div class="help" style="margin:-4px 0 12px;font-size:11px">個人のお金で立て替えて、あとから共同口座から返してもらう場合は「返金待ち」に。
-        振り込みが終わったら「振込済み」にします。どちらの場合も、その支出は共同口座が負担したものとして精算されます。</div></div>
-    <button class="btn" onclick="expSave('${id||''}')"><i data-lucide="check"></i>保存する</button>`);
-  expToggleReim();
+function ledSheet(id){
+  const x=id?LED().find(v=>v.id===id):null;
+  const t=x?x.type:'out';
+  openSheet(`<h3><i data-lucide="landmark"></i>${x?'記録を編集':'共同口座の記録'}</h3>
+    <label class="f"><span>どんな動き？</span>
+      ${seg('ltype',[{v:'in',l:'⬆ 入金'},{v:'out',l:'⬇ 支払い'},{v:'back',l:'↩ 払い戻し'}],t,'ledToggle')}</label>
+    <label class="f"><span>項目名</span>
+      <input class="inp" id="lTitle" placeholder="例：9月分の給料 / スーパー / 旅行代" value="${esc(x?x.title:'')}"></label>
+    <label class="f"><span>金額（円）</span>
+      <input class="inp" id="lAmt" type="number" inputmode="numeric" placeholder="0" value="${x?x.amount:''}"></label>
+    <label class="f"><span>日付</span><input class="inp" id="lDate" type="date" value="${x?x.date:todayY()}"></label>
+
+    <div id="boxIn">
+      <label class="f"><span>誰が入れた？</span>
+        ${seg('lwho',[{v:'keisuke',l:'🐻 けいすけ'},{v:'kotomi',l:'🐰 ことみ'}],x&&x.who?x.who:ME)}</label>
+      <div class="help" style="margin-bottom:12px">給料などを共同口座に入れたときの記録です。残高が増えます。</div>
+    </div>
+
+    <div id="boxOut">
+      <label class="f"><span>カテゴリ</span>
+        <select class="inp" id="lCat">${EXP_CAT.map(c=>`<option ${x&&x.cat===c?'selected':''}>${c}</option>`).join('')}</select></label>
+      <label class="f"><span>どうやって払った？</span>
+        ${seg('lpaid',[{v:'joint',l:'🏦 口座から'},{v:'keisuke',l:'🐻 が立替'},{v:'kotomi',l:'🐰 が立替'}],x&&x.paidBy?x.paidBy:'joint','ledToggle')}</label>
+      <div id="boxReim">
+        <label class="f"><span>立て替えた分の返金は？</span>
+          ${seg('lreim',[{v:'wait',l:'これから返す'},{v:'done',l:'振込済み'}],x&&x.reim?x.reim:'wait')}</label>
+        <div class="help" style="margin:-4px 0 12px;font-size:11px">立て替えた時点では口座のお金は減りません。
+          共同口座から本人に振り込んだときに「振込済み」にすると、残高に反映されます。</div>
+      </div>
+    </div>
+
+    <div id="boxBack">
+      <label class="f"><span>誰が受け取った？</span>
+        ${seg('lto',[{v:'keisuke',l:'🐻 けいすけ'},{v:'kotomi',l:'🐰 ことみ'}],x&&x.to?x.to:ME)}</label>
+      <div class="help" style="margin-bottom:12px">共同口座から個人の口座へお金を戻したときの記録です（立て替えの返金は「支払い」の方で扱います）。</div>
+    </div>
+
+    <button class="btn" onclick="ledSave('${id||''}')"><i data-lucide="check"></i>保存する</button>`);
+  ledToggle();
 }
-function expToggleReim(){
-  const el=document.getElementById('reimBox');
-  if(el) el.style.display = (segVal('payer')==='joint'||segVal('split')==='joint') ? 'none' : 'block';
+function ledToggle(){
+  const t=segVal('ltype'), sh=(id,on)=>{const e=document.getElementById(id); if(e)e.style.display=on?'block':'none';};
+  sh('boxIn',t==='in'); sh('boxOut',t==='out'); sh('boxBack',t==='back');
+  sh('boxReim',t==='out'&&segVal('lpaid')!=='joint');
 }
-function expSave(id){
-  const t=val('eTitle'), a=Number(val('eAmt'));
-  if(!t){toast('項目名を入力してね');return;} if(!a||a<=0){toast('金額を入力してね');return;}
-  const payer=segVal('payer'), split=segVal('split');
-  if(payer==='joint'&&split==='joint'){toast('支払元と負担の両方を共同口座にはできません');return;}
-  const o={title:t,amount:a,date:val('eDate')||todayY(),cat:val('eCat'),payer:payer,split:split,
-           reim:(payer==='joint'||split==='joint') ? '' : segVal('reim')};
-  if(id){ const x=S.expenses.find(v=>v.id===id); Object.assign(x,o); touch(x); }
-  else S.expenses.push(touch(Object.assign({id:uid(),deleted:false},o)));
-  closeSheet(); save(); toast(id?'記録を更新しました':(split==='joint'?'共同口座への入金を記録しました':'支出を追加しました'));
+function ledSave(id){
+  const t=segVal('ltype'), ti=val('lTitle'), a=Number(val('lAmt'));
+  if(!ti){toast('項目名を入力してね');return;}
+  if(!a||a<=0){toast('金額を入力してね');return;}
+  const o={type:t,title:ti,amount:a,date:val('lDate')||todayY(),who:'',cat:'',paidBy:'',reim:'',to:''};
+  if(t==='in') o.who=segVal('lwho');
+  else if(t==='back') o.to=segVal('lto');
+  else{ o.cat=val('lCat'); o.paidBy=segVal('lpaid'); o.reim=o.paidBy==='joint'?'':segVal('lreim'); }
+  if(id){ const v=S.ledger.find(v=>v.id===id); Object.assign(v,o); touch(v); }
+  else S.ledger.push(touch(Object.assign({id:uid(),deleted:false},o)));
+  closeSheet(); save();
+  toast(id?'記録を更新しました':(t==='in'?'入金を記録しました':t==='back'?'払い戻しを記録しました':'支払いを記録しました'));
 }
 async function del(key,id,label){
   if(!await askConfirm(`${label}を削除しますか？`))return;
@@ -1552,7 +1558,7 @@ async function resetAll(){
   if(!await askConfirm('家計簿・予定・家事・Wish・ルールをすべて消します。相手の端末からも消えます。よろしいですか？'))return;
     /* 相手の端末からも確実に消えるよう、削除マークを付けて同期する */
   const now=Date.now();
-  ['expenses','events','chores','wishes','rules','payouts','moodLog'].forEach(k=>{
+  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger'].forEach(k=>{
     S[k].forEach(x=>{ x.deleted=true; x.updatedAt=now; x.lastModifiedBy=ME; });
   });
   ['keisuke','kotomi'].forEach(u=>{ S.moods[u]={value:0,comment:'',updatedAt:now,lastModifiedBy:u}; });
