@@ -422,8 +422,8 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='2.4（2026-08-29）';
-const SCHEMA=6;   /* データ形式の版。項目を増やしたら +1 する */
+const APP_VERSION='2.7（2026-08-29）';
+const SCHEMA=7;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
 const SAMPLE={
@@ -512,19 +512,19 @@ function seed(){
     schema:SCHEMA,
     settings:{anniversary:'2024-06-02', jointInit:500000,
       payday:{on:true,day:25,shiftWeekend:true,label:'給料日'},
-      ai:{url:'',secret:'',sendPlans:true,sendMood:true,sendMoney:false},
+      ai:{url:'',secret:'',name:'AI',persona:'',sendPlans:true,sendMood:true,sendMoney:false,rate:160},
       updatedAt:now, lastModifiedBy:'keisuke'},
     moods:{
       keisuke:{value:0,comment:'',updatedAt:0,lastModifiedBy:'keisuke'},
       kotomi :{value:0,comment:'',updatedAt:0,lastModifiedBy:'kotomi'}
     },
-    expenses:[], events:[], chores:[], wishes:[], rules:[], payouts:[], moodLog:[], ledger:[], chat:[]
+    expenses:[], events:[], chores:[], wishes:[], rules:[], payouts:[], moodLog:[], ledger:[], chat:[], aiLog:[]
   };
 }
 function ensure(s){
   const base=seed();
   if(!s)return base;
-  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat'].forEach(k=>{ if(!Array.isArray(s[k]))s[k]=[]; });
+  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog'].forEach(k=>{ if(!Array.isArray(s[k]))s[k]=[]; });
   s.schema=Math.max(Number(s.schema)||1,SCHEMA);
   s.settings=Object.assign({},base.settings,s.settings||{});
   s.settings.payday=Object.assign({},base.settings.payday,s.settings.payday||{});
@@ -574,14 +574,14 @@ function mergeState(remote){
   if(!remote)return;
   /* 相手がこちらの知らない形式を使っていたら警告（データは触らない） */
   if(Number(remote.schema||1)>SCHEMA){ schemaWarn=true; setTimeout(showUpdBar,50); }
-  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat'].forEach(k=>{ S[k]=mergeArr(S[k],remote[k]); });
+  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog'].forEach(k=>{ S[k]=mergeArr(S[k],remote[k]); });
   ['keisuke','kotomi'].forEach(u=>{
     const r=remote.moods&&remote.moods[u]; if(r&&(r.updatedAt||0)>(S.moods[u].updatedAt||0)) S.moods[u]=r;
   });
   if(remote.settings&&(remote.settings.updatedAt||0)>(S.settings.updatedAt||0)) S.settings=remote.settings;
   // 30日以上前の削除済みを掃除
   const cut=Date.now()-30*864e5;
-  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat'].forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
+  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog'].forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
 }
 const live=k=>(S[k]||[]).filter(x=>!x.deleted);
 
@@ -740,6 +740,35 @@ function updateSyncBar(){
 
 /* ================== AIチャット ================== */
 let aiBusy=false;
+const PERSONAS=[
+  {l:'やさしい聞き上手',t:'やさしくて聞き上手。まず気持ちに寄りそって相づちを打ってから、そっと背中を押してくれる。否定はしない。'},
+  {l:'元気な関西弁',t:'テンション高めでフランク。関西弁で話し、軽くツッコミを入れてくる。ノリがよくて一緒に盛り上がってくれる。'},
+  {l:'落ち着いた年上',t:'おだやかで落ち着いた年上の人。ゆっくりした口調で、ふたりを少し甘やかしてくれる。'},
+  {l:'クールで簡潔',t:'クールで簡潔。前置きや世間話をせず、要点だけを短くまとめて言う。淡々としているが的確。'},
+  {l:'ていねいな執事',t:'古風な執事の口調。「かしこまりました」「〜でございます」と話し、ふたりを主人として丁重に扱う。'},
+  {l:'共通の友達',t:'ふたりの共通の友達みたいな距離感。タメ口で気楽に話し、遠慮なく本音を言う。'},
+];
+/* Claude Haiku 4.5 の料金（100万トークンあたりのドル）。値上げ・モデル変更時はここを直す */
+const AI_PRICE={in:1.0,out:5.0};
+function aiUsage(){
+  const rate=Number((S.settings.ai||{}).rate)||160;
+  const cost=r=>(r.in/1e6*AI_PRICE.in + r.out/1e6*AI_PRICE.out);
+  const ym=d=>{const t=new Date(d);return t.getFullYear()+'-'+pad2(t.getMonth()+1);};
+  const thisYM=ym(Date.now());
+  const prev=new Date(); prev.setDate(1); prev.setMonth(prev.getMonth()-1);
+  const prevYM=ym(prev);
+  const z=()=>({in:0,out:0,n:0});
+  const acc={all:z(),cur:z(),last:z()};
+  live('aiLog').forEach(r=>{
+    const add=t=>{t.in+=Number(r.in)||0;t.out+=Number(r.out)||0;t.n++;};
+    add(acc.all);
+    const y=ym(r.at);
+    if(y===thisYM)add(acc.cur); else if(y===prevYM)add(acc.last);
+  });
+  ['all','cur','last'].forEach(k=>{ acc[k].usd=cost(acc[k]); acc[k].jpy=acc[k].usd*rate; });
+  acc.rate=rate;
+  return acc;
+}
 const CHAT_CHIPS=['今週末どうする？','近場でデートプランを3つ','いまの気分に合う過ごし方は？',
   'やりたいことリストから次はどれ？','ふたりで作れる簡単な晩ごはん','記念日のお祝いアイデア'];
 
@@ -779,20 +808,31 @@ function aiContext(){
   const r=live('rules'); if(r.length)L.push('ふたりの約束事：'+r.map(x=>x.text).join(' / '));
   return L.join('\n');
 }
+function aiName(){ const n=((S.settings.ai||{}).name||'').trim(); return n||'AI'; }
 function aiSystem(){
+  const persona=((S.settings.ai||{}).persona||'').trim();
   return `あなたは「けいすけ」と「ことみ」というカップルが使っている生活アプリに組み込まれた、ふたり共通のアシスタントです。
-いまのふたりの状況は次のとおりです。
+あなたの名前は「${aiName()}」です。
+${persona?`
+# あなたの人格
+${persona}
+
+この人格になりきって、その口調・性格で話してください。名前を聞かれたら「${aiName()}」と答えてください。
+`:''}
+# いまのふたりの状況
 
 ${aiContext()}
 
 # 答えかた
-- 親しみやすい話しことばで、短めに（長くても300字程度）。箇条書きを使うと読みやすいです。
+- 短めに（長くても300字程度）。箇条書きを使うと読みやすいです。
 - ふたりのことは「けいすけ」「ことみ」と名前で呼んでかまいません。発言の先頭に名前が書かれているので、誰が話しているか分かります。
 - 過ごし方やお出かけを提案するときは、上の予定・やりたいことリスト・気分をふまえて、ふたりに合った内容にしてください。
-- お店や施設の名前を出すときは、あなたの情報が古くなっている可能性があるため「実際にあるか確認してね」と必ずひとこと添え、
+
+# 口調や性格にかかわらず、必ず守ること
+- お店や施設の名前を出すときは、あなたの情報が古くなっている可能性があるため「実際にあるか確認してね」という趣旨をひとこと添え、
   かならず [店名](https://www.google.com/maps/search/店名) の形でGoogle Mapsの検索リンクを付けてください。
-- 営業時間・料金・在庫など、確実には分からないことは断定せず、正直に「調べてみて」と伝えてください。
-- 絵文字は控えめに。日本語で答えてください。`;
+- 営業時間・料金・在庫など、確実には分からないことは断定せず、正直に分からないと伝えてください。人格の設定より事実の正確さを優先します。
+- 日本語で答えてください。`;
 }
 function buildMsgs(){
   const hist=live('chat').sort((a,b)=>a.at-b.at).slice(-24);
@@ -808,6 +848,7 @@ function buildMsgs(){
 }
 function openChat(){
   const el=$('#chatPanel');
+  el.querySelector('.chathead b').textContent='💬 '+aiName();
   el.classList.remove('hidden'); requestAnimationFrame(()=>el.classList.add('on'));
   renderChat(); icons();
   $('#chatChips').innerHTML=CHAT_CHIPS.map(c=>`<button type="button" onclick="aiSend('${esc(c)}')">${esc(c)}</button>`).join('');
@@ -825,12 +866,12 @@ function renderChat(){
     return;
   }
   box.innerHTML=(msgs.length?msgs.map(m=>{
-    if(m.role==='ai')return `<div class="bubwrap"><div class="bubwho">✨ AI</div><div class="bub ai">${mdLite(m.text)}</div></div>`;
+    if(m.role==='ai')return `<div class="bubwrap"><div class="bubwho">✨ ${esc(aiName())}</div><div class="bub ai">${mdLite(m.text)}</div></div>`;
     const mine=m.who===ME;
     return `<div class="bubwrap r"><div class="bubwho">${USERS[m.who]?USERS[m.who].emoji+uname(m.who):''}</div>
       <div class="bub ${mine?'me':'other'}">${esc(m.text).replace(/\n/g,'<br>')}</div></div>`;
   }).join('')
-  :`<div class="empty"><div>💬</div>ふたりの状況を知っているAIです。<br>
+  :`<div class="empty"><div>💬</div>ふたりの状況を知っている${esc(aiName())}です。<br>
      出かけ先の相談も、ただのおしゃべりもどうぞ。</div>`)
   +(aiBusy?'<div class="typing"><i></i><i></i><i></i></div>':'');
   box.scrollTop=box.scrollHeight;
@@ -854,11 +895,36 @@ async function aiSend(preset){
     const d=await r.json().catch(()=>({error:'返事を読み取れませんでした'}));
     if(!r.ok||d.error) throw new Error(d.error||('HTTP '+r.status));
     S.chat.push(touch({id:uid(),role:'ai',who:'',text:d.text||'（返答が空でした）',at:Date.now(),deleted:false}));
+    if(d.usage) S.aiLog.push(touch({id:uid(),at:Date.now(),
+      in:Number(d.usage.in)||0,out:Number(d.usage.out)||0,deleted:false}));
     save({render:false});
   }catch(e){
+    /* 送れなかった発言は残さず、書いた文章を入力欄に戻す */
+    const mine=S.chat.filter(m=>!m.deleted).pop();
+    if(mine&&mine.role==='user'&&mine.text===text){ mine.deleted=true; mine.updatedAt=Date.now(); saveLocal(); }
+    if(!preset){ inp.value=text; chatGrow(inp); }
     toast('AIエラー：'+(e.message||'接続できませんでした'));
   }
   aiBusy=false; renderChat();
+}
+async function aiTest(){
+  const url=val('aUrl'), sec=val('aSec');
+  if(!url){toast('中継役のURLを入れてね');return;}
+  toast('確認しています…');
+  try{
+    const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({secret:sec,ping:true})});
+    const d=await r.json().catch(()=>({}));
+    if(d.ok){
+      await askConfirm(d.apiKey==='設定あり'
+        ? '✅ 接続できました。合言葉もAPIキーも設定ずみです。'
+        : '⚠️ 合言葉は合っていますが、中継役に ANTHROPIC_API_KEY が設定されていません。');
+    }else{
+      await askConfirm('❌ '+(d.error||('HTTP '+r.status))+'\n\n※ 文字数が両側で違う場合は、どちらかにコピー漏れか余分な空白があります。');
+    }
+  }catch(e){
+    await askConfirm('❌ 中継役に接続できませんでした。\nURLが正しいか、Cloudflareでデプロイが済んでいるか確認してください。');
+  }
 }
 async function clearChat(){
   if(!live('chat').length)return;
@@ -1668,12 +1734,31 @@ function openSettings(){
       <input class="inp" id="aUrl" placeholder="https://xxxx.workers.dev" value="${esc((st.ai&&st.ai.url)||'')}"></label>
     <label class="f"><span>合言葉（中継役に設定したものと同じ文字列）</span>
       <input class="inp" id="aSec" placeholder="ふたりだけの文字列" value="${esc((st.ai&&st.ai.secret)||'')}"></label>
+    <label class="f"><span>AIの名前（呼びかたも変わります）</span>
+      <input class="inp" id="aName" maxlength="12" placeholder="例：ぽち / まりも / AI" value="${esc((st.ai&&st.ai.name)||'AI')}"></label>
+    <label class="f"><span>AIの性格・話しかた</span>
+      <textarea class="inp" id="aPersona" placeholder="例：やさしくて聞き上手。関西弁でフランクに話す。">${esc((st.ai&&st.ai.persona)||'')}</textarea></label>
+    <div class="qcm" style="margin:-6px 0 12px">${PERSONAS.map(x=>
+      `<button type="button" onclick="document.getElementById('aPersona').value='${esc(x.t)}'">${esc(x.l)}</button>`).join('')}</div>
+    <div class="help" style="margin-bottom:12px">自由に書けます。口調・性格・呼びかた・好きなものなど。
+      ただし<b>お店の情報を確認するよう促すことと、分からないことを断定しないことは、人格にかかわらず必ず守る</b>設定にしてあります。</div>
     <label class="f"><span>予定・やりたいことをAIに伝える</span>
       ${seg('aPlans',[{v:'1',l:'伝える'},{v:'0',l:'伝えない'}],(st.ai&&st.ai.sendPlans===false)?'0':'1')}</label>
     <label class="f"><span>ふたりの気分をAIに伝える</span>
       ${seg('aMood',[{v:'1',l:'伝える'},{v:'0',l:'伝えない'}],(st.ai&&st.ai.sendMood===false)?'0':'1')}</label>
     <label class="f"><span>共同口座の残高をAIに伝える</span>
       ${seg('aMoney',[{v:'1',l:'伝える'},{v:'0',l:'伝えない'}],(st.ai&&st.ai.sendMoney)?'1':'0')}</label>
+    ${(function(){const u=aiUsage();const f=t=>`${t.n}回・約 $${t.usd.toFixed(3)}（約${Math.round(t.jpy).toLocaleString()}円）`;
+      return `<div class="help" style="margin-bottom:12px"><b>これまでの利用量（概算）</b>
+      <div style="margin-top:6px">今月：<b>${f(u.cur)}</b></div>
+      <div>先月：${f(u.last)}</div>
+      <div>ぜんぶ：${f(u.all)}　${u.all.in.toLocaleString()}+${u.all.out.toLocaleString()}トークン</div>
+      <div style="margin-top:6px;font-size:11px">$1=${u.rate}円で換算した目安です。正確な請求額は
+      Anthropicの管理画面（Usage）でご確認ください。</div></div>`;})()}
+    <label class="f"><span>円換算に使うレート（$1あたり）</span>
+      <input class="inp" id="aRate" type="number" inputmode="numeric" value="${Number((st.ai&&st.ai.rate))||160}"></label>
+    <button class="btn ghost" style="width:100%;justify-content:center;margin-bottom:12px" onclick="aiTest()">
+      <i data-lucide="refresh-cw"></i>接続をテストする</button>
     <div class="help" style="margin-bottom:12px">伝える情報が多いほど提案は具体的になりますが、
       その分の内容が外部のAIに送られます。必要なものだけオンにしてください。</div>
     <button class="btn" onclick="setSave()"><i data-lucide="check"></i>設定を保存</button>
@@ -1702,6 +1787,8 @@ function setSave(){
     anniversary:val('sAnv'),
     jointInit:Math.max(0,Number(val('sJoint'))||0),
     ai:Object.assign({},S.settings.ai,{url:val('aUrl'),secret:val('aSec'),
+      rate:Math.max(1,Number(val('aRate'))||160),
+      name:val('aName')||'AI',persona:document.getElementById('aPersona')?document.getElementById('aPersona').value.trim():'',
       sendPlans:segVal('aPlans')==='1',sendMood:segVal('aMood')==='1',sendMoney:segVal('aMoney')==='1'}),
     payday:Object.assign({},S.settings.payday,{on:segVal('payon')==='1',
       day:Math.min(31,Math.max(1,Number(val('sPayDay'))||25)),shiftWeekend:true,label:'給料日'}),
@@ -1762,7 +1849,7 @@ async function resetAll(){
   if(!await askConfirm('家計簿・予定・家事・Wish・ルールをすべて消します。相手の端末からも消えます。よろしいですか？'))return;
     /* 相手の端末からも確実に消えるよう、削除マークを付けて同期する */
   const now=Date.now();
-  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat'].forEach(k=>{
+  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog'].forEach(k=>{
     S[k].forEach(x=>{ x.deleted=true; x.updatedAt=now; x.lastModifiedBy=ME; });
   });
   ['keisuke','kotomi'].forEach(u=>{ S.moods[u]={value:0,comment:'',updatedAt:now,lastModifiedBy:u}; });
