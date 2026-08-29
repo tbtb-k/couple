@@ -297,13 +297,23 @@ input[type=range]::-moz-range-thumb{width:30px;height:30px;border-radius:50%;bac
   color:#fff;font-size:24px;display:flex;align-items:center;justify-content:center;
   box-shadow:0 8px 22px rgba(242,102,141,.42);transition:.15s}
 .fab:active{transform:scale(.9)}
-.chatpanel{position:fixed;inset:0;z-index:120;background:var(--bg);display:flex;flex-direction:column;
-  transform:translateY(100%);transition:transform .28s cubic-bezier(.2,.9,.3,1)}
-.chatpanel.on{transform:none}
+body.noscroll{position:fixed;left:0;right:0;width:100%;overflow:hidden}
+.chatpanel{position:fixed;left:0;right:0;top:0;height:100dvh;z-index:120;background:var(--bg);
+  display:flex;flex-direction:column;overflow:hidden;
+  transform:translateY(100%);transition:transform .3s cubic-bezier(.2,.9,.3,1);
+  visibility:hidden;pointer-events:none}
+.chatpanel.on{transform:none;visibility:visible;pointer-events:auto}
 .chathead{display:flex;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top) + 12px) 14px 12px;
   border-bottom:1px solid var(--line);background:var(--card)}
 .chathead b{font-size:15px;font-weight:800;margin-right:auto}
-.chatbox{flex:1;overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:12px}
+.chatbox{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+  padding:14px 14px 6px;display:flex;flex-direction:column;gap:11px}
+.chatbox>*{flex-shrink:0}
+.chatwrap{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+.jumpb{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);z-index:2;
+  background:var(--ink);color:var(--bg);border-radius:99px;padding:7px 15px;font-size:12px;font-weight:800;
+  box-shadow:0 4px 14px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:.2s}
+.jumpb.on{opacity:1;pointer-events:auto}
 .bub{max-width:100%;padding:11px 14px;border-radius:18px;font-size:14px;line-height:1.7;word-break:break-word}
 .bub a{color:inherit;font-weight:700;text-decoration:underline}
 .bub.ai{background:var(--card);box-shadow:var(--sh);border-bottom-left-radius:6px}
@@ -317,8 +327,13 @@ input[type=range]::-moz-range-thumb{width:30px;height:30px;border-radius:50%;bac
 .typing i{width:7px;height:7px;border-radius:50%;background:var(--sub);display:block;animation:bl 1.2s infinite}
 .typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
 @keyframes bl{0%,60%,100%{opacity:.25}30%{opacity:1}}
-.chatfoot{border-top:1px solid var(--line);background:var(--card);
+.chatfoot{border-top:1px solid var(--line);background:var(--card);flex-shrink:0;
   padding:8px 12px calc(10px + env(safe-area-inset-bottom))}
+.chatchips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.chatchips::-webkit-scrollbar{display:none}
+.chatchips button{flex:0 0 auto;white-space:nowrap;padding:7px 12px;border-radius:99px;
+  background:var(--bg2);font-size:12px;font-weight:700;color:var(--sub)}
+.chatchips button:active{background:var(--line)}
 .chatbar{display:flex;gap:8px;align-items:flex-end}
 .chatbar textarea{flex:1;min-height:44px;max-height:120px;padding:11px 14px;border-radius:22px;
   border:1.5px solid var(--line);background:var(--bg);outline:none;resize:none;font-size:16px;line-height:1.5;
@@ -397,9 +412,12 @@ code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:11px;word-
     <button class="icobtn" onclick="clearChat()" aria-label="会話を消す"><i data-lucide="trash-2"></i></button>
     <button class="icobtn" onclick="closeChat()" aria-label="閉じる"><i data-lucide="x"></i></button>
   </header>
-  <div class="chatbox" id="chatBox"></div>
+  <div class="chatwrap">
+    <div class="chatbox" id="chatBox"></div>
+    <button class="jumpb" id="chatJump" onclick="chatToBottom(true)">新しい発言 ↓</button>
+  </div>
   <div class="chatfoot">
-    <div class="qcm" id="chatChips"></div>
+    <div class="chatchips" id="chatChips"></div>
     <div class="chatbar">
       <textarea id="chatIn" rows="1" placeholder="なんでも聞いてみて…" oninput="chatGrow(this)"></textarea>
       <button class="sendbtn" id="chatSend" onclick="aiSend()"><i data-lucide="send"></i></button>
@@ -422,7 +440,7 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='2.7（2026-08-29）';
+const APP_VERSION='2.8（2026-08-29）';
 const SCHEMA=7;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
@@ -846,17 +864,53 @@ function buildMsgs(){
   while(out.length&&out[0].role==='assistant') out.shift();
   return out;
 }
+/* キーボードが出ても入力欄が隠れないよう、実際に見えている高さに合わせる */
+function fitChat(){
+  const el=document.getElementById('chatPanel'); if(!el)return;
+  const vv=window.visualViewport;
+  if(vv){ el.style.height=vv.height+'px'; el.style.top=vv.offsetTop+'px'; }
+  else { el.style.height=''; el.style.top='0px'; }
+}
+let chatScrollY=0;
 function openChat(){
   const el=$('#chatPanel');
   el.querySelector('.chathead b').textContent='💬 '+aiName();
-  el.classList.remove('hidden'); requestAnimationFrame(()=>el.classList.add('on'));
-  renderChat(); icons();
+  chatScrollY=window.scrollY||0;                    /* 背面のページを固定する */
+  document.body.style.top=(-chatScrollY)+'px';
+  document.body.classList.add('noscroll');
+  el.classList.add('on');
+  fitChat();
+  if(window.visualViewport){
+    visualViewport.addEventListener('resize',fitChat);
+    visualViewport.addEventListener('scroll',fitChat);
+  }
   $('#chatChips').innerHTML=CHAT_CHIPS.map(c=>`<button type="button" onclick="aiSend('${esc(c)}')">${esc(c)}</button>`).join('');
+  renderChat(true); icons();
 }
-function closeChat(){ $('#chatPanel').classList.remove('on'); }
-function chatGrow(t){ t.style.height='auto'; t.style.height=Math.min(120,t.scrollHeight)+'px'; }
-function renderChat(){
+function closeChat(){
+  const el=$('#chatPanel');
+  el.classList.remove('on');
+  document.body.classList.remove('noscroll'); document.body.style.top='';
+  window.scrollTo(0,chatScrollY);
+  if(window.visualViewport){
+    visualViewport.removeEventListener('resize',fitChat);
+    visualViewport.removeEventListener('scroll',fitChat);
+  }
+  const t=$('#chatIn'); if(t)t.blur();
+}
+function chatGrow(t){ t.style.height='auto'; t.style.height=Math.min(132,t.scrollHeight)+'px'; }
+function chatNearBottom(){
+  const b=$('#chatBox'); if(!b)return true;
+  return b.scrollHeight-b.scrollTop-b.clientHeight<90;
+}
+function chatToBottom(smooth){
+  const b=$('#chatBox'); if(!b)return;
+  b.scrollTo({top:b.scrollHeight,behavior:smooth?'smooth':'auto'});
+  const j=$('#chatJump'); if(j)j.classList.remove('on');
+}
+function renderChat(force){
   const box=$('#chatBox'); if(!box)return;
+  const stick=force||chatNearBottom();
   const a=S.settings.ai||{};
   const msgs=live('chat').sort((x,y)=>x.at-y.at);
   if(!a.url||!a.secret){
@@ -874,7 +928,9 @@ function renderChat(){
   :`<div class="empty"><div>💬</div>ふたりの状況を知っている${esc(aiName())}です。<br>
      出かけ先の相談も、ただのおしゃべりもどうぞ。</div>`)
   +(aiBusy?'<div class="typing"><i></i><i></i><i></i></div>':'');
-  box.scrollTop=box.scrollHeight;
+  const j=$('#chatJump');
+  if(stick){ requestAnimationFrame(()=>chatToBottom(false)); if(j)j.classList.remove('on'); }
+  else if(j) j.classList.add('on');
   $('#chatSend').disabled=aiBusy;
 }
 async function aiSend(preset){
@@ -888,7 +944,7 @@ async function aiSend(preset){
   const now=Date.now();
   S.chat.push(touch({id:uid(),role:'user',who:ME,text,at:now,deleted:false}));
   saveLocal(); clearTimeout(saveTimer); saveTimer=setTimeout(()=>Cloud.push(),700);
-  aiBusy=true; renderChat();
+  aiBusy=true; renderChat(true);
   try{
     const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({secret:a.secret,system:aiSystem(),messages:buildMsgs()})});
@@ -905,7 +961,7 @@ async function aiSend(preset){
     if(!preset){ inp.value=text; chatGrow(inp); }
     toast('AIエラー：'+(e.message||'接続できませんでした'));
   }
-  aiBusy=false; renderChat();
+  aiBusy=false; renderChat(true);
 }
 async function aiTest(){
   const url=val('aUrl'), sec=val('aSec');
@@ -997,6 +1053,7 @@ function render(){
   document.querySelectorAll('#tabbar button').forEach(b=>b.classList.toggle('on',b.dataset.t===ui.tab));
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+ui.tab));
   ({home:renderHome,money:renderMoney,cal:renderCal,chore:renderChore,wish:renderWish,rule:renderRule}[ui.tab])();
+  const cp=$('#chatPanel'); if(cp&&cp.classList.contains('on')) renderChat();
   updateSyncBar(); icons();
 }
 
@@ -1868,6 +1925,10 @@ document.addEventListener('keydown',e=>{
     else if(e.key==='Backspace')key('back');
   }
 });
+document.getElementById('chatBox').addEventListener('scroll',()=>{
+  if(chatNearBottom()){ const j=document.getElementById('chatJump'); if(j)j.classList.remove('on'); }
+},{passive:true});
+document.getElementById('chatIn').addEventListener('focus',()=>setTimeout(()=>{fitChat();chatToBottom(true);},280));
 document.getElementById('chatIn').addEventListener('keydown',e=>{
   if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); aiSend(); }
 });
