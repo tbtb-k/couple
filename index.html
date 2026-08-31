@@ -156,6 +156,31 @@ main{padding:14px 14px calc(96px + env(safe-area-inset-bottom));max-width:620px;
   transform:translate(-50%,-50%);box-shadow:0 0 0 3px var(--card);transition:left .5s cubic-bezier(.3,1.4,.5,1)}
 .mood .edit{margin-top:9px;width:100%;justify-content:center;display:flex}
 .mood-scale{display:flex;justify-content:space-between;font-size:9px;color:var(--sub);padding:0 3px}
+/* 金曜のおすすめカード */
+.feed{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);padding:16px;margin-bottom:12px;
+  border:1.5px solid #BFE3D3}
+.feed .fh{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:#2C7F63}
+.feed .fh .x{margin-left:auto;color:var(--sub);font-size:16px;width:26px;height:26px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center}
+.feed .greet{font-size:14px;font-weight:700;margin:8px 0 12px;line-height:1.6}
+.idea{border-top:1px solid var(--line);padding:11px 0}
+.idea .it{font-size:14px;font-weight:800;line-height:1.5}
+.idea .iw{font-size:12px;color:var(--sub);margin-top:3px;line-height:1.7}
+.idea .ib{display:flex;gap:7px;margin-top:8px;flex-wrap:wrap}
+.idea .ib a,.idea .ib button{font-size:11.5px;font-weight:800;padding:6px 11px;border-radius:99px;
+  background:var(--bg2);color:var(--sub);text-decoration:none;display:inline-flex;align-items:center;gap:4px}
+.idea .ib button.added{background:#E4F3EB;color:#2C7F63}
+.feed .fnote{font-size:10.5px;color:var(--sub);margin-top:10px;line-height:1.6}
+/* AIの追加確認カード */
+.tcard{align-self:stretch;background:var(--card);border:1.5px solid var(--accent2);border-radius:16px;
+  padding:14px;box-shadow:var(--sh)}
+.tcard .th{font-size:11.5px;font-weight:800;color:var(--accent2);margin-bottom:9px}
+.tprev{background:var(--bg2);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.tp-k{font-size:10.5px;font-weight:800;color:var(--sub)}
+.tp-t{font-size:14px;font-weight:800;margin-top:2px;line-height:1.5}
+.tp-s{font-size:11.5px;color:var(--sub);margin-top:2px}
+.tcard .tb{display:flex;gap:8px;margin-top:4px}
+.tcard .tb button{flex:1;justify-content:center}
 .hist-btn{width:100%;padding:11px;border-radius:14px;background:var(--card);box-shadow:var(--sh);
   font-size:13px;font-weight:800;color:var(--ink);margin-bottom:12px;display:flex;align-items:center;justify-content:center;gap:6px}
 .lgd{display:flex;gap:14px;justify-content:center;margin:2px 0 8px;font-size:12px;font-weight:700;color:var(--sub)}
@@ -440,9 +465,10 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='2.8（2026-08-29）';
+const APP_VERSION='3.0（2026-08-31）';
 const SCHEMA=7;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
+const LS_FEED='couple_home_feed_v1', LS_FEED_SEEN='couple_home_feedseen_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
 const SAMPLE={
   expenses:['スーパーで買い出し','カフェでモーニング','映画チケット2枚','電車代（往復）','ティッシュ・洗剤','ことみへの誕生日プレゼント'],
@@ -651,6 +677,13 @@ const Cloud={
         if(d.pushId===this.lastPushId)return;
         try{ mergeState(JSON.parse(d.payload)); saveLocal(); render(); toast('☁️ 相手の更新を受け取りました'); }catch(e){}
       },err=>{ this.status='err'; this.dot(); toast('同期エラー: '+err.code); });
+
+      /* 毎週のおすすめは、本体とは別の場所を見る（本体を上書きしないため） */
+      if(this._unsubF)this._unsubF();
+      this._unsubF=fs.onSnapshot(fs.doc(this._db,'feeds',c.room),snap=>{
+        const d=snap.data(); if(!d||!d.payload)return;
+        try{ FEED=JSON.parse(d.payload); localStorage.setItem(LS_FEED,d.payload); render(); }catch(e){}
+      },()=>{});
     }catch(e){ this.status='err'; this.dot(); toast('📴 オフラインです。この端末に保存しています'); }
   },
   async push(){
@@ -663,7 +696,9 @@ const Cloud={
       this.status='on'; this.dot();
     }catch(e){ this.status='err'; this.dot(); }
   },
-  stop(){ if(this._unsub)this._unsub(); this._unsub=null; this.ready=false; this.status='off'; this.dot(); }
+  stop(){ if(this._unsub)this._unsub(); this._unsub=null;
+    if(this._unsubF)this._unsubF(); this._unsubF=null;
+    this.ready=false; this.status='off'; this.dot(); }
 };
 
 /* ---------- auth ---------- */
@@ -757,7 +792,40 @@ function updateSyncBar(){
 }
 
 /* ================== AIチャット ================== */
-let aiBusy=false;
+let aiBusy=false, pendingTool=null;
+let FEED=(function(){ try{return JSON.parse(localStorage.getItem(LS_FEED)||'null')}catch(e){return null} })();
+function feedHidden(){ return FEED && Number(localStorage.getItem(LS_FEED_SEEN)||0)>=Number(FEED.at||0); }
+function feedClose(){ if(FEED)localStorage.setItem(LS_FEED_SEEN,String(FEED.at||Date.now())); render(); }
+function feedAddWish(n){
+  const i=(FEED&&FEED.ideas||[])[n]; if(!i)return;
+  S.wishes.push(touch({id:uid(),deleted:false,title:i.title,
+    gen:['trip','food','movie','shop','other'].includes(i.gen)?i.gen:'other',
+    pri:2,url:i.q?'https://www.google.com/maps/search/'+encodeURIComponent(i.q):'',done:false}));
+  save(); toast('やりたいことに追加しました');
+}
+function feedAsk(n){
+  const i=(FEED&&FEED.ideas||[])[n]; if(!i)return;
+  openChat(); setTimeout(()=>{ const t=$('#chatIn'); if(t){t.value='「'+i.title+'」について、もう少し詳しく教えて';chatGrow(t);t.focus();} },420);
+}
+function feedHTML(){
+  if(!FEED||!FEED.ideas||!FEED.ideas.length||feedHidden())return '';
+  const d=new Date(FEED.at||Date.now());
+  return `<div class="feed">
+    <div class="fh"><i data-lucide="sparkles"></i>${esc(aiName())}からの今週のおすすめ
+      <span style="font-weight:600;color:var(--sub)">${d.getMonth()+1}/${d.getDate()}</span>
+      <button class="x" onclick="feedClose()" aria-label="閉じる">×</button></div>
+    ${FEED.greeting?`<div class="greet">${esc(FEED.greeting)}</div>`:''}
+    ${FEED.ideas.map((i,n)=>`<div class="idea">
+      <div class="it">${WISH_GEN[i.gen]?WISH_GEN[i.gen].e:'✨'} ${esc(i.title)}</div>
+      <div class="iw">${esc(i.why||'')}</div>
+      <div class="ib">
+        <button onclick="feedAddWish(${n})">＋ やりたいことに追加</button>
+        ${i.q?`<a href="https://www.google.com/maps/search/${encodeURIComponent(i.q)}" target="_blank" rel="noopener">📍 Mapsで見る</a>`:''}
+        <button onclick="feedAsk(${n})">💬 相談する</button>
+      </div></div>`).join('')}
+    <div class="fnote">お店や場所は実際にあるか確認してから出かけてください。毎週金曜の朝に新しくなります。</div>
+  </div>`;
+}
 const PERSONAS=[
   {l:'やさしい聞き上手',t:'やさしくて聞き上手。まず気持ちに寄りそって相づちを打ってから、そっと背中を押してくれる。否定はしない。'},
   {l:'元気な関西弁',t:'テンション高めでフランク。関西弁で話し、軽くツッコミを入れてくる。ノリがよくて一緒に盛り上がってくれる。'},
@@ -846,6 +914,13 @@ ${aiContext()}
 - ふたりのことは「けいすけ」「ことみ」と名前で呼んでかまいません。発言の先頭に名前が書かれているので、誰が話しているか分かります。
 - 過ごし方やお出かけを提案するときは、上の予定・やりたいことリスト・気分をふまえて、ふたりに合った内容にしてください。
 
+# 予定・やりたいことの追加について
+- ふたりが「カレンダーに入れて」「リストに追加して」と頼んだときや、話の流れで明らかに登録したそうなときは、道具（add_event / add_wish）を使ってください。
+- **日付がはっきり決まっているものだけ add_event**。決まっていない「いつか行きたい」は add_wish です。
+- 日付は上の「きょう」を基準に計算してください。「今度の土曜」なども具体的な日付に直します。
+- 追加はふたりの確認を経てから実行されます。確認画面が出るので、あなたは道具を呼ぶだけで大丈夫です。
+- 消したり書き換えたりする道具はありません。頼まれても「アプリの画面から消してね」と案内してください。
+
 # 口調や性格にかかわらず、必ず守ること
 - お店や施設の名前を出すときは、あなたの情報が古くなっている可能性があるため「実際にあるか確認してね」という趣旨をひとこと添え、
   かならず [店名](https://www.google.com/maps/search/店名) の形でGoogle Mapsの検索リンクを付けてください。
@@ -927,11 +1002,86 @@ function renderChat(force){
   }).join('')
   :`<div class="empty"><div>💬</div>ふたりの状況を知っている${esc(aiName())}です。<br>
      出かけ先の相談も、ただのおしゃべりもどうぞ。</div>`)
+  +toolCardHTML()
   +(aiBusy?'<div class="typing"><i></i><i></i><i></i></div>':'');
   const j=$('#chatJump');
   if(stick){ requestAnimationFrame(()=>chatToBottom(false)); if(j)j.classList.remove('on'); }
   else if(j) j.classList.add('on');
   $('#chatSend').disabled=aiBusy;
+}
+function toolPreview(u){
+  const i=u.input||{};
+  if(u.name==='add_event'){
+    const c=EV_CAT[i.cat]||EV_CAT.other;
+    return `<div class="tprev"><div class="tp-k">📅 カレンダーに追加</div>
+      <div class="tp-t">${esc(i.title||'')}</div>
+      <div class="tp-s">${esc(i.date||'')}${(i.end&&i.end>i.date)?' 〜 '+esc(i.end):''}${i.time?' '+esc(i.time):''} ・ ${c.l}</div>
+      ${i.memo?`<div class="tp-s">${esc(i.memo)}</div>`:''}</div>`;
+  }
+  const g=WISH_GEN[i.gen]||WISH_GEN.other;
+  const pri=Math.min(3,Math.max(1,Number(i.pri)||2));
+  return `<div class="tprev"><div class="tp-k">💗 やりたいことに追加</div>
+    <div class="tp-t">${esc(i.title||'')}</div>
+    <div class="tp-s">${g.e}${g.l} ・ ${'★'.repeat(pri)}${'☆'.repeat(3-pri)}</div></div>`;
+}
+function toolCardHTML(){
+  if(!pendingTool)return '';
+  return `<div class="tcard"><div class="th">この内容で追加していい？</div>
+    ${pendingTool.uses.map(toolPreview).join('')}
+    <div class="tb"><button class="btn line" onclick="toolConfirm(false)">やめる</button>
+      <button class="btn" onclick="toolConfirm(true)">追加する</button></div></div>`;
+}
+function applyTools(uses){
+  const done=[];
+  uses.forEach(u=>{
+    const i=u.input||{};
+    if(u.name==='add_event'){
+      const date=/^\d{4}-\d{2}-\d{2}$/.test(i.date||'')?i.date:todayY();
+      const o={title:String(i.title||'予定').slice(0,60),date,
+        end:(/^\d{4}-\d{2}-\d{2}$/.test(i.end||'')&&i.end>date)?i.end:'',
+        time:/^\d{2}:\d{2}$/.test(i.time||'')?i.time:'',
+        cat:EV_CAT[i.cat]?i.cat:'other',memo:String(i.memo||'').slice(0,120)};
+      S.events.push(touch(Object.assign({id:uid(),deleted:false},o)));
+      done.push(`「${o.title}」を ${Number(o.date.slice(5,7))}/${Number(o.date.slice(8))} の予定に`);
+    }else if(u.name==='add_wish'){
+      const o={title:String(i.title||'').slice(0,60),gen:WISH_GEN[i.gen]?i.gen:'other',
+        pri:Math.min(3,Math.max(1,Number(i.pri)||2)),
+        url:/^https?:\/\//.test(i.url||'')?i.url:'',done:false};
+      if(!o.title)return;
+      S.wishes.push(touch(Object.assign({id:uid(),deleted:false},o)));
+      done.push(`「${o.title}」をやりたいことに`);
+    }
+  });
+  return done;
+}
+async function toolConfirm(ok){
+  const pt=pendingTool; if(!pt||aiBusy)return;
+  pendingTool=null;
+  let results;
+  if(ok){
+    const done=applyTools(pt.uses);
+    S.chat.push(touch({id:uid(),role:'ai',who:'',text:'✅ '+done.join('、')+' 追加しました。',at:Date.now(),deleted:false}));
+    results=pt.uses.map(u=>({type:'tool_result',tool_use_id:u.id,content:'追加しました'}));
+    toast('追加しました');
+  }else{
+    S.chat.push(touch({id:uid(),role:'ai',who:'',text:'（追加はやめました）',at:Date.now(),deleted:false}));
+    results=pt.uses.map(u=>({type:'tool_result',tool_use_id:u.id,
+      content:'ユーザーが追加を断りました。実際には追加されていません。'}));
+  }
+  save({render:false}); renderChat(true);
+  aiBusy=true; renderChat(true);
+  try{
+    const a=S.settings.ai||{};
+    const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({secret:a.secret,system:aiSystem(),useTools:true,
+        messages:pt.history.concat([{role:'assistant',content:pt.raw},{role:'user',content:results}])})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    if(d.text) S.chat.push(touch({id:uid(),role:'ai',who:'',text:d.text,at:Date.now(),deleted:false}));
+    if(d.usage) S.aiLog.push(touch({id:uid(),at:Date.now(),in:Number(d.usage.in)||0,out:Number(d.usage.out)||0,deleted:false}));
+    save({render:false});
+  }catch(e){ toast('AIエラー：'+(e.message||'')); }
+  aiBusy=false; renderChat(true);
 }
 async function aiSend(preset){
   if(aiBusy)return;
@@ -944,13 +1094,17 @@ async function aiSend(preset){
   const now=Date.now();
   S.chat.push(touch({id:uid(),role:'user',who:ME,text,at:now,deleted:false}));
   saveLocal(); clearTimeout(saveTimer); saveTimer=setTimeout(()=>Cloud.push(),700);
-  aiBusy=true; renderChat(true);
+  aiBusy=true; pendingTool=null; renderChat(true);
+  const history=buildMsgs();
   try{
     const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({secret:a.secret,system:aiSystem(),messages:buildMsgs()})});
+      body:JSON.stringify({secret:a.secret,system:aiSystem(),useTools:true,messages:history})});
     const d=await r.json().catch(()=>({error:'返事を読み取れませんでした'}));
     if(!r.ok||d.error) throw new Error(d.error||('HTTP '+r.status));
-    S.chat.push(touch({id:uid(),role:'ai',who:'',text:d.text||'（返答が空でした）',at:Date.now(),deleted:false}));
+    const uses=(d.content||[]).filter(c=>c.type==='tool_use');
+    if(d.text) S.chat.push(touch({id:uid(),role:'ai',who:'',text:d.text,at:Date.now(),deleted:false}));
+    if(uses.length) pendingTool={uses,raw:d.content,history};
+    else if(!d.text) S.chat.push(touch({id:uid(),role:'ai',who:'',text:'（返答が空でした）',at:Date.now(),deleted:false}));
     if(d.usage) S.aiLog.push(touch({id:uid(),at:Date.now(),
       in:Number(d.usage.in)||0,out:Number(d.usage.out)||0,deleted:false}));
     save({render:false});
@@ -962,6 +1116,19 @@ async function aiSend(preset){
     toast('AIエラー：'+(e.message||'接続できませんでした'));
   }
   aiBusy=false; renderChat(true);
+}
+async function feedNow(){
+  const a=S.settings.ai||{};
+  if(!a.url||!a.secret){toast('先に中継役の設定をしてね');return;}
+  toast('おすすめを作っています…（15秒ほど）');
+  try{
+    const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({secret:a.secret,runWeekly:true})});
+    const d=await r.json().catch(()=>({}));
+    if(d.ok){ localStorage.removeItem(LS_FEED_SEEN); closeSheet(); go('home');
+      await askConfirm('できました。ホーム画面を確認してください。\n（届いていない場合は、中継役の FB_PROJECT / FB_KEY / ROOM_ID の設定を見直してください）'); }
+    else await askConfirm('❌ '+(d.error||'うまくいきませんでした'));
+  }catch(e){ await askConfirm('❌ 中継役に接続できませんでした'); }
 }
 async function aiTest(){
   const url=val('aUrl'), sec=val('aSec');
@@ -987,7 +1154,7 @@ async function clearChat(){
   if(!await askConfirm('AIとの会話をすべて消しますか？（相手の画面からも消えます）'))return;
   const now=Date.now();
   S.chat.forEach(m=>{ if(!m.deleted){m.deleted=true;m.updatedAt=now;m.lastModifiedBy=ME;} });
-  save({render:false}); renderChat(); toast('会話を消しました');
+  pendingTool=null; save({render:false}); renderChat(true); toast('会話を消しました');
 }
 
 /* ---------- サンプルデータの掃除（v1.0 からの移行用） ---------- */
@@ -1256,6 +1423,7 @@ function renderHome(){
   $('#view-home').innerHTML=
    `<div class="mood-row">${moodCard('keisuke')}${moodCard('kotomi')}</div>
     <button class="hist-btn" onclick="moodHistory()"><i data-lucide="line-chart"></i>ふたりの気分の記録を見る</button>
+    ${feedHTML()}
     ${heroHTML()}
     <div class="q-grid">
       <button class="q" onclick="go('money')"><div class="t"><i data-lucide="landmark"></i>共同口座の残高</div>
@@ -1814,6 +1982,12 @@ function openSettings(){
       Anthropicの管理画面（Usage）でご確認ください。</div></div>`;})()}
     <label class="f"><span>円換算に使うレート（$1あたり）</span>
       <input class="inp" id="aRate" type="number" inputmode="numeric" value="${Number((st.ai&&st.ai.rate))||160}"></label>
+    <div class="help" style="margin-bottom:12px"><b>毎週金曜9時のおすすめ配信</b><br>
+      中継役に <code>FB_PROJECT</code> <code>FB_KEY</code> <code>ROOM_ID</code> を設定し、
+      Cron Triggers に <code>0 0 * * 5</code> を登録すると有効になります。
+      できたおすすめはホーム画面に出ます。</div>
+    <button class="btn ghost" style="width:100%;justify-content:center;margin-bottom:12px" onclick="feedNow()">
+      <i data-lucide="sparkles"></i>おすすめ配信を今すぐ試す</button>
     <button class="btn ghost" style="width:100%;justify-content:center;margin-bottom:12px" onclick="aiTest()">
       <i data-lucide="refresh-cw"></i>接続をテストする</button>
     <div class="help" style="margin-bottom:12px">伝える情報が多いほど提案は具体的になりますが、
