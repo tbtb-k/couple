@@ -290,6 +290,10 @@ main{padding:14px 14px calc(96px + env(safe-area-inset-bottom));max-width:620px;
   transform:translateY(102%);transition:transform .3s cubic-bezier(.2,.9,.3,1);max-width:620px;margin:0 auto}
 .sheet.on{transform:none}
 .grab{width:40px;height:4px;border-radius:99px;background:var(--line);margin:8px auto 14px}
+.sheetx{position:absolute;right:14px;top:12px;width:32px;height:32px;border-radius:50%;
+  background:var(--bg2);color:var(--sub);font-size:15px;font-weight:700;z-index:2;
+  display:flex;align-items:center;justify-content:center}
+.sheetx:active{background:var(--line)}
 .sheet h3{margin:0 0 14px;font-size:17px;font-weight:800;display:flex;align-items:center;gap:7px}
 label.f{display:block;margin-bottom:12px}
 label.f>span{display:block;font-size:11px;font-weight:800;color:var(--sub);margin-bottom:5px}
@@ -465,7 +469,7 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='3.0（2026-08-31）';
+const APP_VERSION='3.1（2026-08-31）';
 const SCHEMA=7;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 const LS_FEED='couple_home_feed_v1', LS_FEED_SEEN='couple_home_feedseen_v1';
@@ -497,6 +501,7 @@ const EV_CAT={date:{l:'デート',c:'#FF7C6B'},personal:{l:'個人予定',c:'#5B
 const EV_PICK=[{v:'date',l:'デート'},{v:'personal',l:'個人予定'},{v:'anniv',l:'記念日'},{v:'other',l:'その他'}];
 const WISH_GEN={trip:{l:'旅行',e:'✈️'},food:{l:'外食',e:'🍽'},movie:{l:'映画',e:'🎬'},shop:{l:'買い物',e:'🛍'},other:{l:'その他',e:'✨'}};
 const FREQ=['毎日','週2〜3','毎週','毎月','不定期'];
+const MOOD_CM=['仕事終わった！','お腹すいた','ちょっと疲れた','会いたいなあ','今日は最高！','ねむい…','がんばってる','癒やされたい'];
 const NOTE_BG=['#FFE9D6','#FFDCE2','#DFF1E8','#E3ECFB','#F1E6FA','#FFF3C4'];
 
 let ME=null, S=null, saveTimer=null, freshInstall=false;
@@ -516,6 +521,10 @@ const uname=id=>USERS[id]?USERS[id].name:'ふたり';
 /* 予定の終了日（未設定なら開始日と同じ）と、ある日がその期間に含まれるか */
 const evEnd=e=>(e.end&&e.end>e.date)?e.end:e.date;
 const evCovers=(e,d)=>d>=e.date&&d<=evEnd(e);
+const evCat=e=>EV_CAT[e&&e.cat]||EV_CAT.other;
+const wGen=w=>WISH_GEN[w&&w.gen]||WISH_GEN.other;
+const safeUrl=u=>/^https?:\/\//i.test(String(u||''))?String(u):'';
+const wPri=w=>Math.min(3,Math.max(1,Number(w&&w.pri)||2));
 const evDays=e=>Math.round((pYMD(evEnd(e))-pYMD(e.date))/864e5)+1;
 function relTime(ts){
   if(!ts)return'';
@@ -531,8 +540,17 @@ function badge(id,label){
   if(!id||!USERS[id])return`<span class="badge both">${esc(label||'ふたり')}</span>`;
   return`<span class="badge ${id}">${USERS[id].emoji}${esc(label||USERS[id].name)}</span>`;
 }
-function editedBy(o){ return o&&o.lastModifiedBy ? `<span class="badge ${o.lastModifiedBy}" title="最終更新者">${USERS[o.lastModifiedBy].emoji}${uname(o.lastModifiedBy)}が更新・${relTime(o.updatedAt)}</span>` : ''; }
+function editedBy(o){
+  const u=o&&USERS[o.lastModifiedBy];
+  return u ? `<span class="badge ${o.lastModifiedBy}" title="最終更新者">${u.emoji}${u.name}が更新・${relTime(o.updatedAt)}</span>` : '';
+}
 function touch(o){ o.updatedAt=Date.now(); o.lastModifiedBy=ME; return o; }
+/* 編集しようとした項目が、その間に相手に消されていないか */
+function pick(key,id){
+  const o=(S[key]||[]).find(x=>x.id===id);
+  if(!o||o.deleted){ toast('この項目は削除されています'); closeSheet(); render(); return null; }
+  return o;
+}
 
 /* ---------- mood helpers ---------- */
 function moodEmoji(v){ return v>=8?'🤩':v>=5?'😄':v>=2?'🙂':v>=-1?'😐':v>=-4?'😕':v>=-7?'😢':'😭'; }
@@ -597,9 +615,16 @@ function ensure(s){
   /* 既存の「いまの気分」を履歴の最初の1件として引き継ぐ（初回のみ） */
   if(!s.moodLog.length){
     ['keisuke','kotomi'].forEach(u=>{ const m=s.moods[u];
-      if(m&&m.updatedAt) s.moodLog.push({id:uid(),who:u,v:Number(m.value)||0,cm:m.comment||'',
+      if(m&&m.updatedAt) s.moodLog.push({id:'seed_'+u,who:u,v:Number(m.value)||0,cm:m.comment||'',
         at:m.updatedAt,updatedAt:m.updatedAt,lastModifiedBy:u,deleted:false}); });
   }
+  /* 会話とAI利用の記録は、増えすぎるとクラウドに収まらなくなるので上限をつける */
+  const trim=(k,keep)=>{
+    const arr=s[k].filter(x=>!x.deleted).sort((a,b)=>(b.at||b.updatedAt||0)-(a.at||a.updatedAt||0));
+    if(arr.length>keep){ const nw2=Date.now();
+      arr.slice(keep).forEach(x=>{ x.deleted=true; x.updatedAt=nw2; }); }
+  };
+  trim('chat',300); trim('aiLog',800);
   /* 400日より古い記録は削除マークを付ける（相手の端末にも伝わる） */
   const oldCut=Date.now()-400*864e5, nw=Date.now();
   s.moodLog.forEach(m=>{ if(!m.deleted&&m.at<oldCut){ m.deleted=true; m.updatedAt=nw; } });
@@ -614,18 +639,35 @@ function mergeArr(local,remote){
   return [...map.values()];
 }
 let schemaWarn=false;
+const ARRAYS=['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog'];
+/* 戻り値 true ＝ こちらにしかない情報があるので、クラウドへ押し戻す必要がある */
 function mergeState(remote){
-  if(!remote)return;
+  if(!remote)return false;
   /* 相手がこちらの知らない形式を使っていたら警告（データは触らない） */
   if(Number(remote.schema||1)>SCHEMA){ schemaWarn=true; setTimeout(showUpdBar,50); }
-  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog'].forEach(k=>{ S[k]=mergeArr(S[k],remote[k]); });
+  let need=false;
+  ARRAYS.forEach(k=>{
+    const rid=new Set((remote[k]||[]).map(x=>x&&x.id));
+    S[k]=mergeArr(S[k],remote[k]);
+    if(S[k].some(x=>!rid.has(x.id))) need=true;      /* 相手が知らない項目がこちらにある */
+  });
   ['keisuke','kotomi'].forEach(u=>{
     const r=remote.moods&&remote.moods[u]; if(r&&(r.updatedAt||0)>(S.moods[u].updatedAt||0)) S.moods[u]=r;
   });
-  if(remote.settings&&(remote.settings.updatedAt||0)>(S.settings.updatedAt||0)) S.settings=remote.settings;
+  ['keisuke','kotomi'].forEach(u=>{
+    if((S.moods[u].updatedAt||0)>(((remote.moods||{})[u]||{}).updatedAt||0)) need=true;
+  });
+  if(remote.settings&&(remote.settings.updatedAt||0)>(S.settings.updatedAt||0)){
+    /* 既定値を保ったまま差し替える（jointInit などが消えないように） */
+    const base=seed().settings;
+    S.settings=Object.assign({},base,remote.settings,
+      {payday:Object.assign({},base.payday,remote.settings.payday||{}),
+       ai:Object.assign({},base.ai,remote.settings.ai||{})});
+  }else if((S.settings.updatedAt||0)>((remote.settings||{}).updatedAt||0)) need=true;
   // 30日以上前の削除済みを掃除
   const cut=Date.now()-30*864e5;
-  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog'].forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
+  ARRAYS.forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
+  return need;
 }
 const live=k=>(S[k]||[]).filter(x=>!x.deleted);
 
@@ -645,6 +687,10 @@ const Cloud={
     if(d)d.className='cloud-dot'+(this.status==='on'?' on':this.status==='err'?' err':'');
     updateSyncBar(); },
   async init(){
+    if(this._busy)return;
+    this._busy=true; try{ await this._init(); } finally{ this._busy=false; }
+  },
+  async _init(){
     const c=this.conf(); if(!c||!c.config||!c.room){ this.status='off'; this.dot(); return; }
     this.status='wait'; this.dot();
     try{
@@ -664,10 +710,10 @@ const Cloud={
           this.firstSnap=false;
           if(!d||!d.payload){ freshInstall=false; this.push(); return; }
           try{
-            const r=JSON.parse(d.payload);
-            if(freshInstall) S=ensure(r);   /* この端末は初回 → 相手のデータをそのまま受け取る */
-            else mergeState(r);
+            /* 初回でも丸ごと上書きはしない。受け取るまでに入力したものを失うため */
+            const need=mergeState(JSON.parse(d.payload));
             freshInstall=false; saveLocal(); render(); toast('☁️ 同期しました');
+            if(need) setTimeout(()=>this.push(),1200);
             setTimeout(offerSampleCleanup,600);
           }catch(e){}
           if(this._pending){ this._pending=false; this.push(); }
@@ -675,7 +721,11 @@ const Cloud={
         }
         if(!d||!d.payload)return;
         if(d.pushId===this.lastPushId)return;
-        try{ mergeState(JSON.parse(d.payload)); saveLocal(); render(); toast('☁️ 相手の更新を受け取りました'); }catch(e){}
+        try{
+          const need=mergeState(JSON.parse(d.payload));
+          saveLocal(); render(); toast('☁️ 相手の更新を受け取りました');
+          if(need) setTimeout(()=>this.push(),1200);   /* こちらにしかない分を押し戻す */
+        }catch(e){}
       },err=>{ this.status='err'; this.dot(); toast('同期エラー: '+err.code); });
 
       /* 毎週のおすすめは、本体とは別の場所を見る（本体を上書きしないため） */
@@ -694,7 +744,11 @@ const Cloud={
       await this._fs.setDoc(this._fs.doc(this._db,'couples',this.cfg.room),
         {payload:JSON.stringify(S),pushId:this.lastPushId,at:Date.now(),by:ME});
       this.status='on'; this.dot();
-    }catch(e){ this.status='err'; this.dot(); }
+    }catch(e){
+      this.status='err'; this.dot();
+      if(String(e&&e.message||'').match(/longer than|exceeds|too large/i))
+        toast('データが大きすぎて保存できません。設定から書き出して相談してください');
+    }
   },
   stop(){ if(this._unsub)this._unsub(); this._unsub=null;
     if(this._unsubF)this._unsubF(); this._unsubF=null;
@@ -722,7 +776,7 @@ function tryLogin(){
   }
 }
 function logout(){ localStorage.removeItem(LS_USER); Cloud.stop(); ME=null;
-  clearInterval(window._sbT); const sb=document.getElementById('syncBar'); if(sb){sb.className='hidden';sb.innerHTML='';} $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
+  clearInterval(window._sbT); clearInterval(window._cdT); const sb=document.getElementById('syncBar'); if(sb){sb.className='hidden';sb.innerHTML='';} $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
 function boot(id){
   ME=id; const _raw=loadLocal(); freshInstall=!_raw; S=ensure(_raw); saveLocal();
   const u=USERS[id];
@@ -872,7 +926,7 @@ function aiContext(){
   const a=S.settings.ai||{}, st=S.settings, L=[], n=new Date();
   L.push(`きょうは ${n.getFullYear()}年${n.getMonth()+1}月${n.getDate()}日（${'日月火水木金土'[n.getDay()]}）です。`);
   if(st.anniversary){
-    const d=Math.floor((new Date(todayY())-pYMD(st.anniversary))/864e5)+1;
+    const d=Math.floor((pYMD(todayY())-pYMD(st.anniversary))/864e5)+1;
     L.push(`ふたりは付き合って ${d}日目です。`);
   }
   if(a.sendPlans!==false){
@@ -880,9 +934,9 @@ function aiContext(){
     if(nm)L.push(`次にふたりが会う予定：${nm.date}${nm.time?' '+nm.time:''}「${nm.title}」`);
     const up=live('events').filter(e=>evEnd(e)>=todayY())
       .sort((x,y)=>x.date.localeCompare(y.date)).slice(0,8);
-    if(up.length)L.push('今後の予定：'+up.map(e=>`${e.date} ${e.title}（${EV_CAT[e.cat].l}）`).join(' / '));
+    if(up.length)L.push('今後の予定：'+up.map(e=>`${e.date} ${e.title}（${evCat(e).l}）`).join(' / '));
     const w=live('wishes').filter(x=>!x.done);
-    if(w.length)L.push('やりたいことリスト（未達成）：'+w.map(x=>`${x.title}（${WISH_GEN[x.gen].l}）`).join(' / '));
+    if(w.length)L.push('やりたいことリスト（未達成）：'+w.map(x=>`${x.title}（${wGen(x).l}）`).join(' / '));
     const done=live('wishes').filter(x=>x.done);
     if(done.length)L.push('達成ずみ：'+done.map(x=>x.title).join(' / '));
   }
@@ -950,6 +1004,7 @@ let chatScrollY=0;
 function openChat(){
   const el=$('#chatPanel');
   el.querySelector('.chathead b').textContent='💬 '+aiName();
+  if(el.classList.contains('on')){ renderChat(true); return; }   /* すでに開いていれば開き直さない */
   chatScrollY=window.scrollY||0;                    /* 背面のページを固定する */
   document.body.style.top=(-chatScrollY)+'px';
   document.body.classList.add('noscroll');
@@ -959,7 +1014,7 @@ function openChat(){
     visualViewport.addEventListener('resize',fitChat);
     visualViewport.addEventListener('scroll',fitChat);
   }
-  $('#chatChips').innerHTML=CHAT_CHIPS.map(c=>`<button type="button" onclick="aiSend('${esc(c)}')">${esc(c)}</button>`).join('');
+  $('#chatChips').innerHTML=CHAT_CHIPS.map((c,i)=>`<button type="button" onclick="aiSend(CHAT_CHIPS[${i}])">${esc(c)}</button>`).join('');
   renderChat(true); icons();
 }
 function closeChat(){
@@ -1042,6 +1097,7 @@ function applyTools(uses){
         time:/^\d{2}:\d{2}$/.test(i.time||'')?i.time:'',
         cat:EV_CAT[i.cat]?i.cat:'other',memo:String(i.memo||'').slice(0,120)};
       S.events.push(touch(Object.assign({id:uid(),deleted:false},o)));
+      ui.calCur=o.date.slice(0,7); ui.calSel=o.date;   /* 追加した予定がすぐ見えるように */
       done.push(`「${o.title}」を ${Number(o.date.slice(5,7))}/${Number(o.date.slice(8))} の予定に`);
     }else if(u.name==='add_wish'){
       const o={title:String(i.title||'').slice(0,60),gen:WISH_GEN[i.gen]?i.gen:'other',
@@ -1068,7 +1124,7 @@ async function toolConfirm(ok){
     results=pt.uses.map(u=>({type:'tool_result',tool_use_id:u.id,
       content:'ユーザーが追加を断りました。実際には追加されていません。'}));
   }
-  save({render:false}); renderChat(true);
+  save(); renderChat(true);                 /* 予定・Wishを足したので裏の画面も描き直す */
   aiBusy=true; renderChat(true);
   try{
     const a=S.settings.ai||{};
@@ -1091,8 +1147,8 @@ async function aiSend(preset){
   const a=S.settings.ai||{};
   if(!a.url||!a.secret){ toast('先に設定でAIの接続情報を入れてね'); return; }
   if(!preset){ inp.value=''; chatGrow(inp); }
-  const now=Date.now();
-  S.chat.push(touch({id:uid(),role:'user',who:ME,text,at:now,deleted:false}));
+  const now=Date.now(), myId=uid();
+  S.chat.push(touch({id:myId,role:'user',who:ME,text,at:now,deleted:false}));
   saveLocal(); clearTimeout(saveTimer); saveTimer=setTimeout(()=>Cloud.push(),700);
   aiBusy=true; pendingTool=null; renderChat(true);
   const history=buildMsgs();
@@ -1109,9 +1165,9 @@ async function aiSend(preset){
       in:Number(d.usage.in)||0,out:Number(d.usage.out)||0,deleted:false}));
     save({render:false});
   }catch(e){
-    /* 送れなかった発言は残さず、書いた文章を入力欄に戻す */
-    const mine=S.chat.filter(m=>!m.deleted).pop();
-    if(mine&&mine.role==='user'&&mine.text===text){ mine.deleted=true; mine.updatedAt=Date.now(); saveLocal(); }
+    /* 送れなかった発言は取り消して、書いた文章を入力欄に戻す */
+    const mine=S.chat.find(m=>m.id===myId);
+    if(mine){ mine.deleted=true; touch(mine); save({render:false}); }
     if(!preset){ inp.value=text; chatGrow(inp); }
     toast('AIエラー：'+(e.message||'接続できませんでした'));
   }
@@ -1126,7 +1182,7 @@ async function feedNow(){
       body:JSON.stringify({secret:a.secret,runWeekly:true})});
     const d=await r.json().catch(()=>({}));
     if(d.ok){ localStorage.removeItem(LS_FEED_SEEN); closeSheet(); go('home');
-      await askConfirm('できました。ホーム画面を確認してください。\n（届いていない場合は、中継役の FB_PROJECT / FB_KEY / ROOM_ID の設定を見直してください）'); }
+      toast('できました。ホーム画面を確認してください'); }
     else await askConfirm('❌ '+(d.error||'うまくいきませんでした'));
   }catch(e){ await askConfirm('❌ 中継役に接続できませんでした'); }
 }
@@ -1183,7 +1239,7 @@ async function offerSampleCleanup(){
 /* ---------- sheet / modal ---------- */
 function openSheet(html){
   const sh=$('#sheet'), mk=$('#mask');
-  sh.innerHTML='<div class="grab"></div>'+html;
+  sh.innerHTML='<button class="sheetx" onclick="closeSheet()" aria-label="閉じる">✕</button><div class="grab"></div>'+html;
   mk.classList.remove('hidden'); requestAnimationFrame(()=>{mk.classList.add('on');sh.classList.add('on');});
   icons();
 }
@@ -1199,11 +1255,16 @@ function askConfirm(msg){
       <button class="btn line" id="cNo">やめる</button><button class="btn" id="cYes">はい</button></div>`;
     mk.classList.remove('hidden'); md.classList.remove('hidden');
     requestAnimationFrame(()=>{mk.classList.add('on');md.classList.add('on')});
-    const fin=v=>{md.classList.remove('on');md.classList.add('hidden');mk.classList.remove('on');
-      setTimeout(()=>mk.classList.add('hidden'),240);res(v);};
+    const fin=v=>{
+      md.classList.remove('on'); md.classList.add('hidden');
+      /* シートが開いたままなら、覆いは残す（残さないとシートを閉じられなくなる） */
+      const sheetOpen=$('#sheet').classList.contains('on');
+      if(!sheetOpen){ mk.classList.remove('on'); setTimeout(()=>mk.classList.add('hidden'),240); }
+      $('#mask').onclick=closeSheet;
+      res(v);};
     $('#cYes').onclick=()=>fin(true); $('#cNo').onclick=()=>fin(false);
     mk.onclick=()=>fin(false);
-  }).finally(()=>{ $('#mask').onclick=closeSheet; });
+  });
 }
 function seg(name,opts,cur,cb){
   return `<div class="seg" data-seg="${name}">`+opts.map(o=>
@@ -1248,7 +1309,7 @@ function moodSheet(){
     <div class="mood-scale" style="margin:4px 2px 16px"><span>-10 すごく悲しい</span><span>0</span><span>+10 すごいいい気分</span></div>
     <label class="f"><span>ひとことコメント</span>
       <input class="inp" id="mcm" maxlength="60" placeholder="例：仕事終わった！" value="${esc(m.comment||'')}"></label>
-    <div class="qcm">${['仕事終わった！','お腹すいた','ちょっと疲れた','会いたいなあ','今日は最高！','ねむい…','がんばってる','癒やされたい'].map(t=>`<button type="button" onclick="document.getElementById('mcm').value='${t}'">${t}</button>`).join('')}</div>
+    <div class="qcm">${MOOD_CM.map((t,i)=>`<button type="button" onclick="document.getElementById('mcm').value=MOOD_CM[${i}]">${esc(t)}</button>`).join('')}</div>
     <button class="btn" onclick="moodSave()"><i data-lucide="check"></i>この気分で更新する</button>`);
   mprev();
 }
@@ -1321,7 +1382,8 @@ function moodChart(all){
 function moodHistory(){
   if(ui.moodRange===undefined)ui.moodRange=30;
   ui.moodSel='';
-  openSheet('<h3>📈 ふたりの気分の記録</h3><div id="moodBody"></div>');
+  openSheet('<h3>📈 ふたりの気分の記録</h3><div id="moodBody"></div>'+
+    '<button class="btn line" style="width:100%;justify-content:center;margin-top:18px" onclick="closeSheet()">閉じる</button>');
   renderMoodBody();
 }
 function renderMoodBody(){
@@ -1406,15 +1468,15 @@ function heroHTML(){
     const miles=[100,200,300,365,500,730,1000,1095,1460,1825,2000,2555,3000,3650];
     const nx=miles.find(x=>x>days);
     an=`<div class="anv"><span style="font-size:13px">付き合って</span><b>${days.toLocaleString()}</b><span style="font-size:15px;font-weight:800">日目</span></div>
-        <div class="next-mile">${nx?`🎊 ${nx.toLocaleString()}日まで あと ${(nx-days).toLocaleString()}日`:''} ・ ${st.anniversary.replace(/-/g,'/')}から</div>`;
+        <div class="next-mile">${nx?`🎊 ${nx.toLocaleString()}日まで あと ${(nx-days).toLocaleString()}日 ・ `:''}${st.anniversary.replace(/-/g,'/')}から</div>`;
   }
   return `<div class="hero" onclick="go('cal')" style="cursor:pointer">
     <div class="lb"><i data-lucide="heart-handshake"></i>次に会う日まで</div>${cd}<hr>${an}</div>`;
 }
 function renderHome(){
   const th=todayY().slice(0,7);
-  const mOut=live('ledger').filter(x=>(x.type==='out'||x.type==='back')&&x.date.startsWith(th))
-    .reduce((a,b)=>a+Number(b.amount),0);
+  const mOut=live('ledger').filter(x=>(x.type==='out'||x.type==='back')&&String(x.date||'').startsWith(th))
+    .reduce((a,b)=>a+(Number(b.amount)||0),0);
   const jbal=jointBalance();
   const undone=live('chores').filter(c=>!c.done).length;
   const nextEv=live('events').concat(paydaysBetween(todayY(),ymd(addDays(new Date(),120))))
@@ -1583,7 +1645,7 @@ function renderMoney(){
 }
 async function markPaid(who){
   const t=LED().filter(x=>x.type==='out'&&x.paidBy===who&&x.reim==='wait');
-  const amt=t.reduce((a,b)=>a+Number(b.amount),0);
+  const amt=t.reduce((a,b)=>a+(Number(b.amount)||0),0);
   if(!await askConfirm(uname(who)+'さんへ '+yen(amt)+' を共同口座から振り込みましたか？\n残高から差し引かれます。'))return;
   t.forEach(x=>{ x.reim='done'; touch(x); });
   save(); toast('振込済みにしました');
@@ -1651,7 +1713,7 @@ function ledSave(id){
   if(t==='in') o.who=segVal('lwho');
   else if(t==='back') o.to=segVal('lto');
   else{ o.cat=val('lCat'); o.paidBy=segVal('lpaid'); o.reim=o.paidBy==='joint'?'':segVal('lreim'); }
-  if(id){ const v=S.ledger.find(v=>v.id===id); Object.assign(v,o); touch(v); }
+  if(id){ const v=pick('ledger',id); if(!v)return; Object.assign(v,o); touch(v); }
   else S.ledger.push(touch(Object.assign({id:uid(),deleted:false},o)));
   closeSheet(); save();
   toast(id?'記録を更新しました':(t==='in'?'入金を記録しました':t==='back'?'払い戻しを記録しました':'支払いを記録しました'));
@@ -1659,7 +1721,9 @@ function ledSave(id){
 async function del(key,id,label){
   if(!await askConfirm(`${label}を削除しますか？`))return;
   const o=S[key].find(x=>x.id===id); if(!o)return;
-  o.deleted=true; touch(o); save(); toast('削除しました');
+  o.deleted=true; touch(o); save();
+  if(document.getElementById('moodBody')) renderMoodBody();
+  toast('削除しました');
 }
 
 /* ============================ CALENDAR ============================ */
@@ -1676,7 +1740,7 @@ function renderCal(){
       const de=evs.filter(e=>evCovers(e,s));
       cells+=`<button class="cel ${out?'out':''} ${s===todayY()?'today':''} ${s===ui.calSel?'sel':''}" onclick="ui.calSel='${s}';render()">
         <span style="${d.getDay()===0?'color:var(--accent)':d.getDay()===6?'color:var(--k)':''}">${d.getDate()}</span>
-        <span class="dots">${de.slice(0,3).map(e=>`<i style="background:${EV_CAT[e.cat].c}"></i>`).join('')}</span></button>`;
+        <span class="dots">${de.slice(0,3).map(e=>`<i style="background:${evCat(e).c}"></i>`).join('')}</span></button>`;
     }
     const sel=evs.filter(e=>evCovers(e,ui.calSel)).sort((a,b)=>(a.time||'99').localeCompare(b.time||'99'));
     const sd=pYMD(ui.calSel);
@@ -1705,7 +1769,7 @@ function renderCal(){
     </div>${body}`;
 }
 function evLine(e,showDate){
-  const c=EV_CAT[e.cat]; const d=pYMD(e.date);
+  const c=evCat(e); const d=pYMD(e.date);
   return `<div class="evline">
     <div class="evbar" style="background:${c.c}"></div>
     ${showDate?`<div class="date-tag"><b>${d.getDate()}</b><span>${d.getMonth()+1}月(${'日月火水木金土'[d.getDay()]})</span></div>`:''}
@@ -1740,7 +1804,7 @@ function evSave(id){
   const o={title:t,date:val('vDate')||todayY(),time:val('vTime'),cat:segVal('ecat'),memo:val('vMemo')};
   const en=val('vEnd'); o.end=(en&&en>o.date)?en:'';
   if(en&&en<o.date){ toast('終了日は開始日より後にしてね'); return; }
-  if(id){const x=S.events.find(v=>v.id===id);Object.assign(x,o);touch(x);}
+  if(id){const x=pick('events',id); if(!x)return; Object.assign(x,o); touch(x);}
   else S.events.push(touch(Object.assign({id:uid(),deleted:false},o)));
   ui.calSel=o.date; ui.calCur=o.date.slice(0,7);
   closeSheet(); save(); toast(id?'予定を更新しました':'予定を追加しました');
@@ -1783,7 +1847,7 @@ function renderChore(){
       </div>`).join(''):'<div class="empty"><div>🧹</div>タスクがありません</div>'}</div>`;
 }
 function chToggle(id){
-  const c=S.chores.find(x=>x.id===id); c.done=!c.done; c.doneAt=c.done?Date.now():0; touch(c);
+  const c=pick('chores',id); if(!c)return; c.done=!c.done; c.doneAt=c.done?Date.now():0; touch(c);
   saveLocal(); clearTimeout(saveTimer); saveTimer=setTimeout(()=>Cloud.push(),700);
   const el=document.querySelector('#ch-'+id+' .chk');
   if(el){ el.classList.toggle('on',c.done); el.classList.add('pop'); }
@@ -1809,7 +1873,7 @@ function chSheet(id){
 function chSave(id){
   const t=val('cTitle'); if(!t){toast('タスク名を入力してね');return;}
   const o={title:t,who:segVal('cwho'),freq:val('cFreq')};
-  if(id){const x=S.chores.find(v=>v.id===id);Object.assign(x,o);touch(x);}
+  if(id){const x=pick('chores',id); if(!x)return; Object.assign(x,o); touch(x);}
   else S.chores.push(touch(Object.assign({id:uid(),deleted:false,done:false,doneAt:0},o)));
   closeSheet(); save(); toast(id?'タスクを更新しました':'タスクを追加しました');
 }
@@ -1829,19 +1893,19 @@ function renderWish(){
     </div>
     <div class="wgrid">${list.length?list.map(w=>`
       <div class="wcard ${w.done?'done':''}" id="w-${w.id}">
-        <div class="row"><span class="gen">${WISH_GEN[w.gen].e}</span>
-          <span class="pill">${WISH_GEN[w.gen].l}</span>
+        <div class="row"><span class="gen">${wGen(w).e}</span>
+          <span class="pill">${wGen(w).l}</span>
           <div class="iact" style="margin-left:auto"><button onclick="wSheet('${w.id}')"><i data-lucide="pencil"></i></button>
             <button onclick="del('wishes','${w.id}','このWish')"><i data-lucide="trash-2"></i></button></div></div>
         <div class="wt">${esc(w.title)}</div>
-        <div class="stars">${'★'.repeat(w.pri)}${'☆'.repeat(3-w.pri)} <span class="muted">${['','低','中','高'][w.pri]}</span></div>
-        ${w.url?`<a href="${esc(w.url)}" target="_blank" rel="noopener"><i data-lucide="map-pin"></i>リンクを開く</a>`:''}
+        <div class="stars">${'★'.repeat(wPri(w))}${'☆'.repeat(3-wPri(w))} <span class="muted">${['','低','中','高'][wPri(w)]}</span></div>
+        ${safeUrl(w.url)?`<a href="${esc(safeUrl(w.url))}" target="_blank" rel="noopener"><i data-lucide="map-pin"></i>リンクを開く</a>`:''}
         <div>${editedBy(w)}</div>
         <button class="wbtn ${w.done?'go':''}" onclick="wDone('${w.id}')">${w.done?'🎉 達成済み！':'達成にする'}</button>
       </div>`).join(''):'<div class="empty" style="grid-column:1/-1"><div>💭</div>やりたいことを追加しよう</div>'}</div>`;
 }
 function wDone(id){
-  const w=S.wishes.find(x=>x.id===id); w.done=!w.done; touch(w);
+  const w=pick('wishes',id); if(!w)return; w.done=!w.done; touch(w);
   saveLocal(); clearTimeout(saveTimer); saveTimer=setTimeout(()=>Cloud.push(),700);
   if(w.done){
     const el=document.getElementById('w-'+id); if(el)el.classList.add('cheer');
@@ -1865,8 +1929,10 @@ function wSheet(id){
 }
 function wSave(id){
   const t=val('wTitle'); if(!t){toast('タイトルを入力してね');return;}
-  const o={title:t,gen:segVal('wgen'),pri:Number(segVal('wpri')),url:val('wUrl')};
-  if(id){const x=S.wishes.find(v=>v.id===id);Object.assign(x,o);touch(x);}
+  const u=val('wUrl');
+  const o={title:t,gen:segVal('wgen'),pri:Number(segVal('wpri')),url:/^https?:\/\//.test(u)?u:''};
+  if(u&&!o.url){toast('リンクは https:// から始めてね');return;}
+  if(id){const x=pick('wishes',id); if(!x)return; Object.assign(x,o); touch(x);}
   else S.wishes.push(touch(Object.assign({id:uid(),deleted:false,done:false},o)));
   closeSheet(); save(); toast(id?'更新しました':'追加しました');
 }
@@ -1878,7 +1944,7 @@ function renderRule(){
    `<div class="sec-head"><h2><i data-lucide="scroll-text"></i>ふたりの約束事</h2>
       <button class="btn sm sp" onclick="rSheet()"><i data-lucide="plus"></i>メモを追加</button></div>
     ${list.length?list.map(r=>`
-      <div class="note" style="background:${NOTE_BG[r.color%NOTE_BG.length]}">
+      <div class="note" style="background:${NOTE_BG[(Number(r.color)||0)%NOTE_BG.length]}">
         <div class="tx">${esc(r.text)}</div>
         <div class="ft">${editedBy(r)}
           <div class="iact" style="margin-left:auto"><button onclick="rSheet('${r.id}')"><i data-lucide="pencil"></i></button>
@@ -1890,13 +1956,13 @@ function rSheet(id){
   openSheet(`<h3><i data-lucide="scroll-text"></i>${r?'メモを編集':'約束を追加'}</h3>
     <label class="f"><span>内容</span><textarea class="inp" id="rTx" placeholder="例：けんかしても寝る前に仲直りする">${esc(r?r.text:'')}</textarea></label>
     <label class="f"><span>色</span><div class="seg sw" data-seg="rcol">${NOTE_BG.map((c,i)=>
-      `<button type="button" data-v="${i}" class="${(r?r.color:0)===i?'on':''}" style="background:${c};height:44px" onclick="segPick(this)"></button>`).join('')}</div></label>
+      `<button type="button" data-v="${i}" class="${(r?Number(r.color)||0:0)===i?'on':''}" style="background:${c};height:44px" onclick="segPick(this)"></button>`).join('')}</div></label>
     <button class="btn" onclick="rSave('${id||''}')"><i data-lucide="check"></i>保存する</button>`);
 }
 function rSave(id){
   const t=document.getElementById('rTx').value.trim(); if(!t){toast('内容を入力してね');return;}
   const o={text:t,color:Number(segVal('rcol'))};
-  if(id){const x=S.rules.find(v=>v.id===id);Object.assign(x,o);touch(x);}
+  if(id){const x=pick('rules',id); if(!x)return; Object.assign(x,o); touch(x);}
   else S.rules.push(touch(Object.assign({id:uid(),deleted:false},o)));
   closeSheet(); save(); toast(id?'更新しました':'追加しました');
 }
@@ -1963,8 +2029,8 @@ function openSettings(){
       <input class="inp" id="aName" maxlength="12" placeholder="例：ぽち / まりも / AI" value="${esc((st.ai&&st.ai.name)||'AI')}"></label>
     <label class="f"><span>AIの性格・話しかた</span>
       <textarea class="inp" id="aPersona" placeholder="例：やさしくて聞き上手。関西弁でフランクに話す。">${esc((st.ai&&st.ai.persona)||'')}</textarea></label>
-    <div class="qcm" style="margin:-6px 0 12px">${PERSONAS.map(x=>
-      `<button type="button" onclick="document.getElementById('aPersona').value='${esc(x.t)}'">${esc(x.l)}</button>`).join('')}</div>
+    <div class="qcm" style="margin:-6px 0 12px">${PERSONAS.map((x,i)=>
+      `<button type="button" onclick="document.getElementById('aPersona').value=PERSONAS[${i}].t">${esc(x.l)}</button>`).join('')}</div>
     <div class="help" style="margin-bottom:12px">自由に書けます。口調・性格・呼びかた・好きなものなど。
       ただし<b>お店の情報を確認するよう促すことと、分からないことを断定しないことは、人格にかかわらず必ず守る</b>設定にしてあります。</div>
     <label class="f"><span>予定・やりたいことをAIに伝える</span>
@@ -2072,8 +2138,10 @@ function expJSON(){
 function impJSON(inp){
   const f=inp.files[0]; if(!f)return;
   const r=new FileReader();
-  r.onload=()=>{ try{ mergeState(JSON.parse(r.result)); saveLocal(); closeSheet(); render(); toast('取り込みました（新しい方を採用）'); }
-    catch(e){ toast('ファイルを読み取れませんでした'); } };
+  r.onload=()=>{ try{
+      mergeState(JSON.parse(r.result)); S=ensure(S);
+      saveLocal(); Cloud.push(); closeSheet(); render(); toast('取り込みました（新しい方を採用）');
+    }catch(e){ toast('ファイルを読み取れませんでした'); } finally{ inp.value=''; } };
   r.readAsText(f);
 }
 async function resetAll(){
