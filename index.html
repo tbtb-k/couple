@@ -345,6 +345,13 @@ body.noscroll{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 .jumpb.on{opacity:1;pointer-events:auto}
 .bub{max-width:100%;padding:11px 14px;border-radius:18px;font-size:14px;line-height:1.7;word-break:break-word}
 .bub a{color:inherit;font-weight:700;text-decoration:underline}
+.srcs{margin-top:9px;padding-top:8px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:5px}
+.srcs .sl{font-size:10px;font-weight:800;color:var(--sub);letter-spacing:.04em}
+.srcs a{display:block;font-size:11.5px;color:var(--k);text-decoration:none;font-weight:600;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.searched{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:800;
+  color:#2C7F63;background:#E7F4EE;border-radius:99px;padding:2px 8px;margin-left:6px}
+@media (prefers-color-scheme:dark){.searched{background:#1E3A31;color:#7FD3B4}}
 .bub.ai{background:var(--card);box-shadow:var(--sh);border-bottom-left-radius:6px}
 .bub.me{background:var(--accent);color:#fff;border-bottom-right-radius:6px}
 .bub.other{background:var(--bg2);border-bottom-right-radius:6px}
@@ -469,7 +476,7 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='3.1（2026-08-31）';
+const APP_VERSION='3.2（2026-09-01）';
 const SCHEMA=7;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 const LS_FEED='couple_home_feed_v1', LS_FEED_SEEN='couple_home_feedseen_v1';
@@ -574,7 +581,7 @@ function seed(){
     schema:SCHEMA,
     settings:{anniversary:'2024-06-02', jointInit:500000,
       payday:{on:true,day:25,shiftWeekend:true,label:'給料日'},
-      ai:{url:'',secret:'',name:'AI',persona:'',sendPlans:true,sendMood:true,sendMoney:false,rate:160},
+      ai:{url:'',secret:'',name:'AI',persona:'',area:'',useWeb:true,sendPlans:true,sendMood:true,sendMoney:false,rate:160},
       updatedAt:now, lastModifiedBy:'keisuke'},
     moods:{
       keisuke:{value:0,comment:'',updatedAt:0,lastModifiedBy:'keisuke'},
@@ -888,19 +895,20 @@ const PERSONAS=[
   {l:'ていねいな執事',t:'古風な執事の口調。「かしこまりました」「〜でございます」と話し、ふたりを主人として丁重に扱う。'},
   {l:'共通の友達',t:'ふたりの共通の友達みたいな距離感。タメ口で気楽に話し、遠慮なく本音を言う。'},
 ];
-/* Claude Haiku 4.5 の料金（100万トークンあたりのドル）。値上げ・モデル変更時はここを直す */
-const AI_PRICE={in:1.0,out:5.0};
+/* Claude Sonnet 5 の料金（100万トークンあたりのドル）＋ ネット検索1回あたり。
+   Workerの MODEL を変えたら、ここも合わせて直してください */
+const AI_PRICE={in:2.0,out:10.0,search:0.01};
 function aiUsage(){
   const rate=Number((S.settings.ai||{}).rate)||160;
-  const cost=r=>(r.in/1e6*AI_PRICE.in + r.out/1e6*AI_PRICE.out);
+  const cost=r=>(r.in/1e6*AI_PRICE.in + r.out/1e6*AI_PRICE.out + (r.sc||0)*AI_PRICE.search);
   const ym=d=>{const t=new Date(d);return t.getFullYear()+'-'+pad2(t.getMonth()+1);};
   const thisYM=ym(Date.now());
   const prev=new Date(); prev.setDate(1); prev.setMonth(prev.getMonth()-1);
   const prevYM=ym(prev);
-  const z=()=>({in:0,out:0,n:0});
+  const z=()=>({in:0,out:0,sc:0,n:0});
   const acc={all:z(),cur:z(),last:z()};
   live('aiLog').forEach(r=>{
-    const add=t=>{t.in+=Number(r.in)||0;t.out+=Number(r.out)||0;t.n++;};
+    const add=t=>{t.in+=Number(r.in)||0;t.out+=Number(r.out)||0;t.sc+=Number(r.sc)||0;t.n++;};
     add(acc.all);
     const y=ym(r.at);
     if(y===thisYM)add(acc.cur); else if(y===prevYM)add(acc.last);
@@ -944,6 +952,7 @@ function aiContext(){
     ['keisuke','kotomi'].forEach(u=>{ const m=S.moods[u];
       if(m&&m.updatedAt)L.push(`${uname(u)}の最近の気分：${m.value>0?'+':''}${m.value}（-10〜+10）${m.comment?'「'+m.comment+'」':''}`); });
   }
+  if(a.area)L.push(`ふたりの生活圏：${a.area}（お出かけの提案はこのあたりを基準に）`);
   if(a.sendMoney)L.push(`ふたりの共同口座の残高：およそ ${yen(jointBalance().bal)}`);
   const r=live('rules'); if(r.length)L.push('ふたりの約束事：'+r.map(x=>x.text).join(' / '));
   return L.join('\n');
@@ -967,6 +976,8 @@ ${aiContext()}
 - 短めに（長くても300字程度）。箇条書きを使うと読みやすいです。
 - ふたりのことは「けいすけ」「ことみ」と名前で呼んでかまいません。発言の先頭に名前が書かれているので、誰が話しているか分かります。
 - 過ごし方やお出かけを提案するときは、上の予定・やりたいことリスト・気分をふまえて、ふたりに合った内容にしてください。
+- **一般的な知識で答えられることは、そのまま答えてください。**「おすすめの食べ物は？」「この料理の作り方は？」のような質問に「分からない」と答える必要はありません。
+- 好みを聞かれたら、はっきり選んで理由を添えてください。無難に濁さないでください。
 
 # 予定・やりたいことの追加について
 - ふたりが「カレンダーに入れて」「リストに追加して」と頼んだときや、話の流れで明らかに登録したそうなときは、道具（add_event / add_wish）を使ってください。
@@ -975,10 +986,17 @@ ${aiContext()}
 - 追加はふたりの確認を経てから実行されます。確認画面が出るので、あなたは道具を呼ぶだけで大丈夫です。
 - 消したり書き換えたりする道具はありません。頼まれても「アプリの画面から消してね」と案内してください。
 
+# ネット検索の使いかた
+- あなたは web_search でネットを調べられます。**最新の情報や、実在するかどうかが大事な話題は、まず調べてから答えてください。**
+  （具体的なお店・イベント・期間限定のもの・営業時間・料金・今年の開催日など）
+- 逆に、一般的な知識・料理の話・相談ごと・雑談は、**調べずにそのまま答えてください**。何でも検索する必要はありません。
+- 調べて分かったことは、そのまま答えて大丈夫です。「確認してね」を毎回付ける必要はありません。
+- 調べても確かなことが分からなかったときだけ、正直にそう伝えてください。
+
 # 口調や性格にかかわらず、必ず守ること
-- お店や施設の名前を出すときは、あなたの情報が古くなっている可能性があるため「実際にあるか確認してね」という趣旨をひとこと添え、
-  かならず [店名](https://www.google.com/maps/search/店名) の形でGoogle Mapsの検索リンクを付けてください。
-- 営業時間・料金・在庫など、確実には分からないことは断定せず、正直に分からないと伝えてください。人格の設定より事実の正確さを優先します。
+- **調べずに、具体的なお店の名前を断定しないでください。** 調べていない場合は「エリア＋種類」（例：鎌倉の古民家カフェ）で伝え、
+  [鎌倉 古民家カフェ](https://www.google.com/maps/search/鎌倉+古民家カフェ) の形でGoogle Mapsの検索リンクを添えてください。
+- 事実の正確さは、人格の設定より優先します。作り話はしないでください。
 - 日本語で答えてください。`;
 }
 function buildMsgs(){
@@ -1050,7 +1068,14 @@ function renderChat(force){
     return;
   }
   box.innerHTML=(msgs.length?msgs.map(m=>{
-    if(m.role==='ai')return `<div class="bubwrap"><div class="bubwho">✨ ${esc(aiName())}</div><div class="bub ai">${mdLite(m.text)}</div></div>`;
+    if(m.role==='ai'){
+      const sr=Array.isArray(m.srcs)?m.srcs.filter(x=>x&&safeUrl(x.url)):[];
+      return `<div class="bubwrap"><div class="bubwho">✨ ${esc(aiName())}${sr.length?'<span class="searched">🔎 調べました</span>':''}</div>
+        <div class="bub ai">${mdLite(m.text)}
+        ${sr.length?`<div class="srcs"><span class="sl">参照したページ</span>
+          ${sr.map(x=>`<a href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener">${esc(x.title||x.url)}</a>`).join('')}</div>`:''}
+        </div></div>`;
+    }
     const mine=m.who===ME;
     return `<div class="bubwrap r"><div class="bubwho">${USERS[m.who]?USERS[m.who].emoji+uname(m.who):''}</div>
       <div class="bub ${mine?'me':'other'}">${esc(m.text).replace(/\n/g,'<br>')}</div></div>`;
@@ -1133,8 +1158,8 @@ async function toolConfirm(ok){
         messages:pt.history.concat([{role:'assistant',content:pt.raw},{role:'user',content:results}])})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
-    if(d.text) S.chat.push(touch({id:uid(),role:'ai',who:'',text:d.text,at:Date.now(),deleted:false}));
-    if(d.usage) S.aiLog.push(touch({id:uid(),at:Date.now(),in:Number(d.usage.in)||0,out:Number(d.usage.out)||0,deleted:false}));
+    if(d.text) S.chat.push(touch({id:uid(),role:'ai',who:'',text:d.text,srcs:d.sources||[],at:Date.now(),deleted:false}));
+    if(d.usage) S.aiLog.push(touch({id:uid(),at:Date.now(),in:Number(d.usage.in)||0,out:Number(d.usage.out)||0,sc:Number(d.usage.searches)||0,deleted:false}));
     save({render:false});
   }catch(e){ toast('AIエラー：'+(e.message||'')); }
   aiBusy=false; renderChat(true);
@@ -1154,15 +1179,16 @@ async function aiSend(preset){
   const history=buildMsgs();
   try{
     const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({secret:a.secret,system:aiSystem(),useTools:true,messages:history})});
+      body:JSON.stringify({secret:a.secret,system:aiSystem(),useTools:true,
+        useWeb:a.useWeb!==false,city:a.area||'',messages:history})});
     const d=await r.json().catch(()=>({error:'返事を読み取れませんでした'}));
     if(!r.ok||d.error) throw new Error(d.error||('HTTP '+r.status));
     const uses=(d.content||[]).filter(c=>c.type==='tool_use');
-    if(d.text) S.chat.push(touch({id:uid(),role:'ai',who:'',text:d.text,at:Date.now(),deleted:false}));
+    if(d.text) S.chat.push(touch({id:uid(),role:'ai',who:'',text:d.text,srcs:d.sources||[],at:Date.now(),deleted:false}));
     if(uses.length) pendingTool={uses,raw:d.content,history};
     else if(!d.text) S.chat.push(touch({id:uid(),role:'ai',who:'',text:'（返答が空でした）',at:Date.now(),deleted:false}));
     if(d.usage) S.aiLog.push(touch({id:uid(),at:Date.now(),
-      in:Number(d.usage.in)||0,out:Number(d.usage.out)||0,deleted:false}));
+      in:Number(d.usage.in)||0,out:Number(d.usage.out)||0,sc:Number(d.usage.searches)||0,deleted:false}));
     save({render:false});
   }catch(e){
     /* 送れなかった発言は取り消して、書いた文章を入力欄に戻す */
@@ -2033,6 +2059,13 @@ function openSettings(){
       `<button type="button" onclick="document.getElementById('aPersona').value=PERSONAS[${i}].t">${esc(x.l)}</button>`).join('')}</div>
     <div class="help" style="margin-bottom:12px">自由に書けます。口調・性格・呼びかた・好きなものなど。
       ただし<b>お店の情報を確認するよう促すことと、分からないことを断定しないことは、人格にかかわらず必ず守る</b>設定にしてあります。</div>
+    <label class="f"><span>ふたりの生活圏（お出かけ提案の基準になります）</span>
+      <input class="inp" id="aArea" maxlength="30" placeholder="例：東京都世田谷区 / 横浜" value="${esc((st.ai&&st.ai.area)||'')}"></label>
+    <label class="f"><span>ネットで調べてから答える</span>
+      ${seg('aWeb',[{v:'1',l:'調べる'},{v:'0',l:'調べない'}],(st.ai&&st.ai.useWeb===false)?'0':'1')}</label>
+    <div class="help" style="margin-bottom:12px">お店やイベントなど、実在するかが大事な話題のときだけAIが自分で検索します。
+      1回のやりとりで最大3回まで。調べたときは返事の下に参照したページが出ます。
+      <b>検索1回につき約1.6円</b>かかります。</div>
     <label class="f"><span>予定・やりたいことをAIに伝える</span>
       ${seg('aPlans',[{v:'1',l:'伝える'},{v:'0',l:'伝えない'}],(st.ai&&st.ai.sendPlans===false)?'0':'1')}</label>
     <label class="f"><span>ふたりの気分をAIに伝える</span>
@@ -2043,7 +2076,7 @@ function openSettings(){
       return `<div class="help" style="margin-bottom:12px"><b>これまでの利用量（概算）</b>
       <div style="margin-top:6px">今月：<b>${f(u.cur)}</b></div>
       <div>先月：${f(u.last)}</div>
-      <div>ぜんぶ：${f(u.all)}　${u.all.in.toLocaleString()}+${u.all.out.toLocaleString()}トークン</div>
+      <div>ぜんぶ：${f(u.all)}　${u.all.in.toLocaleString()}+${u.all.out.toLocaleString()}トークン${u.all.sc?`・検索${u.all.sc}回`:''}</div>
       <div style="margin-top:6px;font-size:11px">$1=${u.rate}円で換算した目安です。正確な請求額は
       Anthropicの管理画面（Usage）でご確認ください。</div></div>`;})()}
     <label class="f"><span>円換算に使うレート（$1あたり）</span>
@@ -2085,6 +2118,7 @@ function setSave(){
     jointInit:Math.max(0,Number(val('sJoint'))||0),
     ai:Object.assign({},S.settings.ai,{url:val('aUrl'),secret:val('aSec'),
       rate:Math.max(1,Number(val('aRate'))||160),
+      area:val('aArea'),useWeb:segVal('aWeb')==='1',
       name:val('aName')||'AI',persona:document.getElementById('aPersona')?document.getElementById('aPersona').value.trim():'',
       sendPlans:segVal('aPlans')==='1',sendMood:segVal('aMood')==='1',sendMoney:segVal('aMoney')==='1'}),
     payday:Object.assign({},S.settings.payday,{on:segVal('payon')==='1',
