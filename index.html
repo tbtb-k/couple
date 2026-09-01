@@ -476,7 +476,7 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='3.2（2026-09-01）';
+const APP_VERSION='3.3（2026-09-01）';
 const SCHEMA=7;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 const LS_FEED='couple_home_feed_v1', LS_FEED_SEEN='couple_home_feedseen_v1';
@@ -873,7 +873,7 @@ function feedHTML(){
   const d=new Date(FEED.at||Date.now());
   return `<div class="feed">
     <div class="fh"><i data-lucide="sparkles"></i>${esc(aiName())}からの今週のおすすめ
-      <span style="font-weight:600;color:var(--sub)">${d.getMonth()+1}/${d.getDate()}</span>
+      <span style="font-weight:600;color:var(--sub)">${d.getMonth()+1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}</span>
       <button class="x" onclick="feedClose()" aria-label="閉じる">×</button></div>
     ${FEED.greeting?`<div class="greet">${esc(FEED.greeting)}</div>`:''}
     ${FEED.ideas.map((i,n)=>`<div class="idea">
@@ -1202,14 +1202,20 @@ async function aiSend(preset){
 async function feedNow(){
   const a=S.settings.ai||{};
   if(!a.url||!a.secret){toast('先に中継役の設定をしてね');return;}
-  toast('おすすめを作っています…（15秒ほど）');
+  toast('おすすめを作っています…（30秒ほどかかります）');
   try{
     const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({secret:a.secret,runWeekly:true})});
     const d=await r.json().catch(()=>({}));
-    if(d.ok){ localStorage.removeItem(LS_FEED_SEEN); closeSheet(); go('home');
-      toast('できました。ホーム画面を確認してください'); }
-    else await askConfirm('❌ '+(d.error||'うまくいきませんでした'));
+    if(d.ok){
+      localStorage.removeItem(LS_FEED_SEEN); closeSheet(); go('home');
+      /* 何が作られたかをその場で見せる（前と同じかどうか判断できるように） */
+      await askConfirm('✅ 新しいおすすめができました。\n\n・'+
+        (d.titles||[]).join('\n・')+
+        (d.searches?'\n\n（ネット検索 '+d.searches+'回）':''));
+    }else{
+      await askConfirm('❌ 作れませんでした。\n\n'+(d.error||'原因が分かりませんでした'));
+    }
   }catch(e){ await askConfirm('❌ 中継役に接続できませんでした'); }
 }
 async function aiTest(){
