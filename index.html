@@ -206,6 +206,8 @@ main{padding:14px 14px calc(96px + env(safe-area-inset-bottom));max-width:620px;
 .anv{display:flex;align-items:baseline;gap:6px;position:relative}
 .anv b{font-size:26px;font-weight:800}
 .next-mile{font-size:11px;opacity:.9;margin-top:3px;position:relative}
+.anv2{position:relative;margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.28);
+  font-size:12.5px;font-weight:700}
 .q-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:12px}
 .q{background:var(--card);border-radius:16px;box-shadow:var(--sh);padding:13px;text-align:left}
 .q .t{font-size:11px;color:var(--sub);font-weight:700;display:flex;align-items:center;gap:4px}
@@ -476,8 +478,8 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='3.3（2026-09-01）';
-const SCHEMA=7;   /* データ形式の版。項目を増やしたら +1 する */
+const APP_VERSION='3.5（2026-09-02）';
+const SCHEMA=8;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 const LS_FEED='couple_home_feed_v1', LS_FEED_SEEN='couple_home_feedseen_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
@@ -581,19 +583,20 @@ function seed(){
     schema:SCHEMA,
     settings:{anniversary:'2024-06-02', jointInit:500000,
       payday:{on:true,day:25,shiftWeekend:true,label:'給料日'},
+      milestones:true,
       ai:{url:'',secret:'',name:'AI',persona:'',area:'',useWeb:true,sendPlans:true,sendMood:true,sendMoney:false,rate:160},
       updatedAt:now, lastModifiedBy:'keisuke'},
     moods:{
       keisuke:{value:0,comment:'',updatedAt:0,lastModifiedBy:'keisuke'},
       kotomi :{value:0,comment:'',updatedAt:0,lastModifiedBy:'kotomi'}
     },
-    expenses:[], events:[], chores:[], wishes:[], rules:[], payouts:[], moodLog:[], ledger:[], chat:[], aiLog:[]
+    expenses:[], events:[], chores:[], wishes:[], rules:[], payouts:[], moodLog:[], ledger:[], chat:[], aiLog:[], annivs:[]
   };
 }
 function ensure(s){
   const base=seed();
   if(!s)return base;
-  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog'].forEach(k=>{ if(!Array.isArray(s[k]))s[k]=[]; });
+  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog','annivs'].forEach(k=>{ if(!Array.isArray(s[k]))s[k]=[]; });
   s.schema=Math.max(Number(s.schema)||1,SCHEMA);
   s.settings=Object.assign({},base.settings,s.settings||{});
   s.settings.payday=Object.assign({},base.settings.payday,s.settings.payday||{});
@@ -617,6 +620,7 @@ function ensure(s){
     (s.payouts||[]).forEach(q=>{ if(!q.deleted){q.deleted=true;q.updatedAt=nw;} });
   })();
   if(s.settings.jointInit===undefined)s.settings.jointInit=500000;
+  if(s.settings.milestones===undefined)s.settings.milestones=true;
   s.settings.ai=Object.assign({},base.settings.ai,s.settings.ai||{});
   s.moods=Object.assign({},base.moods,s.moods||{});
   /* 既存の「いまの気分」を履歴の最初の1件として引き継ぐ（初回のみ） */
@@ -646,7 +650,7 @@ function mergeArr(local,remote){
   return [...map.values()];
 }
 let schemaWarn=false;
-const ARRAYS=['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog'];
+const ARRAYS=['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog','annivs'];
 /* 戻り値 true ＝ こちらにしかない情報があるので、クラウドへ押し戻す必要がある */
 function mergeState(remote){
   if(!remote)return false;
@@ -1199,6 +1203,52 @@ async function aiSend(preset){
   }
   aiBusy=false; renderChat(true);
 }
+/* ---------- バックアップ ---------- */
+async function bkCall(body){
+  const a=S.settings.ai||{};
+  if(!a.url||!a.secret)throw new Error('先に中継役の設定をしてください');
+  const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify(Object.assign({secret:a.secret},body))});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+  return d;
+}
+async function bkNow(){
+  toast('保存しています…');
+  try{ const d=await bkCall({runBackup:true});
+    await askConfirm('✅ バックアップを保存しました。\n\n共同口座 '+d.counts.ledger+'件 / 予定 '+d.counts.events+
+      '件 / 家事 '+d.counts.chores+'件 / やりたいこと '+d.counts.wishes+'件 / 気分 '+d.counts.moodLog+'件');
+  }catch(e){ await askConfirm('❌ '+e.message); }
+}
+async function bkList(){
+  toast('確認しています…');
+  let list;
+  try{ list=(await bkCall({listBackups:true})).list||[]; }
+  catch(e){ await askConfirm('❌ '+e.message); return; }
+  if(!list.length){ await askConfirm('まだバックアップがありません。\n「今すぐ保存」を一度押してみてください。'); return; }
+  const f=t=>{const d=new Date(t);return `${d.getMonth()+1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;};
+  openSheet(`<h3>🛟 バックアップから戻す</h3>
+    <div class="help" style="margin-bottom:14px">選んだ時点の状態に<b>まるごと入れ替えます</b>。
+      いまのデータは戻す直前に自動で書き出されるので、必要ならそこから復元できます。
+      入れ替えた内容は相手の端末にも反映されます。</div>
+    ${list.map(b=>`<div class="item"><div style="flex:1;min-width:0">
+      <div style="font-weight:800;font-size:14px">${f(b.at)} の状態</div>
+      <div class="muted" style="font-size:11px">共同口座 ${b.counts.ledger} ・ 予定 ${b.counts.events} ・ 家事 ${b.counts.chores}
+        ・ やりたいこと ${b.counts.wishes} ・ 気分 ${b.counts.moodLog}</div></div>
+      <button class="btn sm line" onclick="bkRestore(${b.slot},'${f(b.at)}')">これに戻す</button></div>`).join('')}`);
+}
+async function bkRestore(slot,label){
+  if(!await askConfirm('『'+label+' の状態』に戻します。\n\nいまのデータは置き換わります。よろしいですか？'))return;
+  try{
+    expJSON();                                   /* 念のため、いまの状態を先に書き出す */
+    const d=await bkCall({getBackup:slot});
+    if(!d.data)throw new Error('中身が空でした');
+    S=ensure(d.data); saveLocal(); Cloud.push();
+    closeSheet(); render();
+    await askConfirm('✅ 戻しました。\n（直前のデータは書き出したファイルに入っています）');
+  }catch(e){ await askConfirm('❌ 戻せませんでした：'+e.message); }
+}
+
 async function feedNow(){
   const a=S.settings.ai||{};
   if(!a.url||!a.secret){toast('先に中継役の設定をしてね');return;}
@@ -1474,6 +1524,7 @@ function pickNearest(ev){
   if(best){ ui.moodSel=best.id; renderMoodBody(); }
 }
 /* カレンダーの「デート」「記念日」から、いちばん近い予定を拾う */
+/* 記念日や節目ではなく、実際に登録された予定だけを「次に会う日」とする */
 function nextMeet(){
   return live('events')
     .filter(e=>(e.cat==='date'||e.cat==='anniv')&&evEnd(e)>=todayY())
@@ -1497,13 +1548,17 @@ function heroHTML(){
   let an='';
   if(st.anniversary){
     const days=Math.floor((new Date(todayY())-pYMD(st.anniversary))/864e5)+1;
-    const miles=[100,200,300,365,500,730,1000,1095,1460,1825,2000,2555,3000,3650];
-    const nx=miles.find(x=>x>days);
     an=`<div class="anv"><span style="font-size:13px">付き合って</span><b>${days.toLocaleString()}</b><span style="font-size:15px;font-weight:800">日目</span></div>
-        <div class="next-mile">${nx?`🎊 ${nx.toLocaleString()}日まで あと ${(nx-days).toLocaleString()}日 ・ `:''}${st.anniversary.replace(/-/g,'/')}から</div>`;
+        <div class="next-mile">${st.anniversary.replace(/-/g,'/')}から</div>`;
+  }
+  const na=nextAniv();
+  let anv2='';
+  if(na){
+    const left=Math.round((pYMD(na.date)-pYMD(todayY()))/864e5);
+    anv2=`<div class="anv2">${esc(na.title)}　${left===0?'は今日！':`まで あと ${left}日`}</div>`;
   }
   return `<div class="hero" onclick="go('cal')" style="cursor:pointer">
-    <div class="lb"><i data-lucide="heart-handshake"></i>次に会う日まで</div>${cd}<hr>${an}</div>`;
+    <div class="lb"><i data-lucide="heart-handshake"></i>次に会う日まで</div>${cd}<hr>${an}${anv2}</div>`;
 }
 function renderHome(){
   const th=todayY().slice(0,7);
@@ -1511,7 +1566,10 @@ function renderHome(){
     .reduce((a,b)=>a+(Number(b.amount)||0),0);
   const jbal=jointBalance();
   const undone=live('chores').filter(c=>!c.done).length;
-  const nextEv=live('events').concat(paydaysBetween(todayY(),ymd(addDays(new Date(),120))))
+  const nextEv=live('events')
+    .concat(paydaysBetween(todayY(),ymd(addDays(new Date(),120))),
+            anivsBetween(todayY(),ymd(addDays(new Date(),120))),
+            milesBetween(todayY(),ymd(addDays(new Date(),120))))
     .filter(e=>evEnd(e)>=todayY()).sort((a,b)=>a.date.localeCompare(b.date))[0];
   const wOpen=live('wishes').filter(w=>!w.done).length;
   $('#view-home').innerHTML=
@@ -1545,6 +1603,59 @@ function paydayDate(y,m){
   const d=new Date(y,m,Math.min(Math.max(1,Number(c.day)||25),last));
   if(c.shiftWeekend!==false) while(d.getDay()===0||d.getDay()===6) d.setDate(d.getDate()-1);
   return d;
+}
+/* 記念日・誕生日。毎年その日に出る（2/29は平年だと2/28に寄せる） */
+const ANV_KIND={birthday:{l:'誕生日',e:'🎂'},anniv:{l:'記念日',e:'💍'},other:{l:'その他',e:'🎉'}};
+const anvKind=a=>ANV_KIND[a&&a.kind]||ANV_KIND.other;
+function anivOn(a,year){
+  const m=Number(String(a.date).slice(5,7)), d=Number(String(a.date).slice(8,10));
+  if(!m||!d)return null;
+  const last=new Date(year,m,0).getDate();
+  return new Date(year,m-1,Math.min(d,last));
+}
+function anivsBetween(fromY,toY){
+  const out=[], y0=pYMD(fromY).getFullYear(), y1=pYMD(toY).getFullYear();
+  live('annivs').forEach(a=>{
+    for(let y=y0;y<=y1;y++){
+      const dt=anivOn(a,y); if(!dt)continue;
+      const sd=ymd(dt); if(sd<fromY||sd>toY)continue;
+      const base=Number(String(a.date).slice(0,4))||0;
+      const n=base&&y>base?(y-base):0;
+      const suffix=n?(a.kind==='birthday'?`（${n}歳）`:`（${n}周年）`):'';
+      out.push({id:'anv-'+a.id+'-'+y,date:sd,time:'',cat:'anniv',memo:'',virtual:true,end:'',
+        title:anvKind(a).e+' '+a.name+suffix});
+    }
+  });
+  return out;
+}
+/* 付き合った日からの節目。周年と、切りのいい日数 */
+const MILES=[100,200,300,400,500,600,700,800,900,1000,1500,2000,2500,3000,4000,5000,7000,10000];
+function milesBetween(fromY,toY){
+  const st=S.settings;
+  if(st.milestones===false||!st.anniversary)return [];
+  const out=[], a=pYMD(st.anniversary);
+  /* 切りのいい日数（付き合った日が1日目） */
+  MILES.forEach(n=>{
+    const d=ymd(addDays(a,n-1));
+    if(d>=fromY&&d<=toY) out.push({id:'mile-'+n,date:d,time:'',cat:'anniv',memo:'',virtual:true,end:'',
+      title:'🎊 付き合って'+n.toLocaleString()+'日目'});
+  });
+  /* 周年 */
+  const y0=pYMD(fromY).getFullYear(), y1=pYMD(toY).getFullYear();
+  for(let y=y0;y<=y1;y++){
+    const n=y-a.getFullYear(); if(n<1)continue;
+    const last=new Date(y,a.getMonth()+1,0).getDate();
+    const d=ymd(new Date(y,a.getMonth(),Math.min(a.getDate(),last)));
+    if(d>=fromY&&d<=toY) out.push({id:'yr-'+y,date:d,time:'',cat:'anniv',memo:'',virtual:true,end:'',
+      title:'💕 付き合って'+n+'周年'});
+  }
+  return out;
+}
+/* いちばん近い記念日・節目（ホームの一行に出す） */
+function nextAniv(){
+  const t=todayY(), e=ymd(addDays(new Date(),400));
+  return anivsBetween(t,e).concat(milesBetween(t,e))
+    .sort((a,b)=>a.date.localeCompare(b.date))[0]||null;
 }
 function paydaysBetween(fromY,toY){
   const c=S.settings.payday||{};
@@ -1765,7 +1876,8 @@ function renderCal(){
   if(ui.calMode==='month'){
     const [y,m]=ui.calCur.split('-').map(Number);
     const first=new Date(y,m-1,1), start=addDays(first,-first.getDay());
-    evs=evs.concat(paydaysBetween(ymd(start),ymd(addDays(start,41))));
+    const f1=ymd(start), t1=ymd(addDays(start,41));
+    evs=evs.concat(paydaysBetween(f1,t1),anivsBetween(f1,t1),milesBetween(f1,t1));
     let cells='';
     for(let i=0;i<42;i++){
       const d=addDays(start,i), s=ymd(d), out=d.getMonth()!==m-1;
@@ -1784,7 +1896,8 @@ function renderCal(){
     <div class="card"><div class="sec-head"><h2>${sd.getMonth()+1}月${sd.getDate()}日（${'日月火水木金土'[sd.getDay()]}）の予定</h2></div>
       ${sel.length?sel.map(evLine).join(''):'<div class="empty"><div>🗓</div>この日の予定はありません</div>'}</div>`;
   }else{
-    evs=evs.concat(paydaysBetween(ymd(addDays(new Date(),-120)),ymd(addDays(new Date(),400))));
+    const f0=ymd(addDays(new Date(),-120)), t0=ymd(addDays(new Date(),400));
+    evs=evs.concat(paydaysBetween(f0,t0),anivsBetween(f0,t0),milesBetween(f0,t0));
     const up=evs.filter(e=>evEnd(e)>=todayY()).sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'99').localeCompare(b.time||'99'));
     const past=evs.filter(e=>evEnd(e)<todayY()).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
     body=`<div class="card"><div class="sec-head"><h2><i data-lucide="calendar-clock"></i>これからの予定</h2></div>
@@ -2007,10 +2120,27 @@ function openSettings(){
     <label class="f"><span>記念日（付き合った日）</span><input class="inp" id="sAnv" type="date" value="${esc(st.anniversary||'')}"></label>
     <div class="help" style="margin-bottom:12px">「次に会う日」は、カレンダーに登録した<b>「デート」「記念日」</b>の予定のうち、
       いちばん近いものから自動で計算されます。ここで設定する必要はありません。</div>
+    <h3 style="margin-top:22px">🎂 記念日・誕生日</h3>
+    <div class="help" style="margin-bottom:10px">登録すると毎年カレンダーに出て、ホームに「あと◯日」が表示されます。</div>
+    ${live('annivs').sort((a,b)=>String(a.date).slice(5).localeCompare(String(b.date).slice(5))).map(a=>`
+      <div class="item"><div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:14px">${anvKind(a).e} ${esc(a.name)}</div>
+        <div class="muted" style="font-size:11px">${String(a.date).length>7?String(a.date).replace(/-/g,'/'):'毎年 '+String(a.date).slice(5).replace('-','/')}
+          ・${anvKind(a).l}</div></div>
+        <div class="iact"><button onclick="anvSheet('${a.id}')"><i data-lucide="pencil"></i></button>
+          <button onclick="del('annivs','${a.id}','この記念日')"><i data-lucide="trash-2"></i></button></div>
+      </div>`).join('')||'<div class="muted" style="font-size:12px;padding:6px 0">まだ登録がありません</div>'}
+    <button class="btn ghost" style="width:100%;justify-content:center;margin:10px 0 20px" onclick="anvSheet()">
+      <i data-lucide="plus"></i>記念日を追加</button>
+
     <label class="f"><span>🏦 共同口座の初期残高（円）</span>
       <input class="inp" id="sJoint" type="number" inputmode="numeric" value="${Number(st.jointInit)||0}"></label>
     <div class="help" style="margin-bottom:12px">この金額を出発点に、入金と支出を足し引きして残高を表示します。
       いま口座にある金額を入れてください。</div>
+    <label class="f"><span>🎊 記念日の節目をカレンダーに出す</span>
+      ${seg('sMile',[{v:'1',l:'出す'},{v:'0',l:'出さない'}],(st.milestones===false)?'0':'1')}</label>
+    <div class="help" style="margin-bottom:12px">付き合った日からの<b>周年</b>と、<b>100日・200日…1000日</b>といった
+      切りのいい日数が、自動でカレンダーに並びます。</div>
     <label class="f"><span>💰 給料日を毎月カレンダーに出す</span>
       ${seg('payon',[{v:'1',l:'出す'},{v:'0',l:'出さない'}],(st.payday&&st.payday.on===false)?'0':'1')}</label>
     <label class="f"><span>毎月何日？</span>
@@ -2099,6 +2229,15 @@ function openSettings(){
       その分の内容が外部のAIに送られます。必要なものだけオンにしてください。</div>
     <button class="btn" onclick="setSave()"><i data-lucide="check"></i>設定を保存</button>
 
+    <h3 style="margin-top:26px">🛟 自動バックアップ</h3>
+    <div class="help" style="margin-bottom:12px">
+      毎週金曜に、そのときのデータの写しが自動で保存されます。<b>4週ぶん</b>さかのぼって戻せます。
+      中継役に <code>FB_PROJECT</code> <code>FB_KEY</code> <code>ROOM_ID</code> の設定が必要です。</div>
+    <div class="row" style="gap:8px;margin-bottom:12px">
+      <button class="btn ghost" style="flex:1" onclick="bkNow()"><i data-lucide="upload"></i>今すぐ保存</button>
+      <button class="btn ghost" style="flex:1" onclick="bkList()"><i data-lucide="refresh-cw"></i>戻す</button>
+    </div>
+
     <h3 style="margin-top:26px"><i data-lucide="download"></i>データの持ち出し・取り込み</h3>
     <div class="muted" style="margin-bottom:10px">クラウドを使わない場合は、ファイルでデータを共有できます。</div>
     <div class="row" style="gap:8px">
@@ -2118,10 +2257,32 @@ function openSettings(){
       更新してもデータ・同期キーはそのまま残ります</div>
     <div class="muted" style="text-align:center;margin-top:18px">ふたりのおうち　バージョン ${APP_VERSION}</div>`);
 }
+function anvSheet(id){
+  const a=id?live('annivs').find(x=>x.id===id):null;
+  openSheet(`<h3>🎂 ${a?'記念日を編集':'記念日を追加'}</h3>
+    <label class="f"><span>名前</span>
+      <input class="inp" id="nvName" placeholder="例：ことみの誕生日" value="${esc(a?a.name:'')}"></label>
+    <label class="f"><span>日付（年が分かれば入れてください。◯歳・◯周年が出ます）</span>
+      <input class="inp" id="nvDate" type="date" value="${esc(a?a.date:'')}"></label>
+    <label class="f"><span>種類</span>
+      ${seg('nvKind',[{v:'birthday',l:'🎂 誕生日'},{v:'anniv',l:'💍 記念日'},{v:'other',l:'🎉 その他'}],a?a.kind:'birthday')}</label>
+    <button class="btn" onclick="anvSave('${id||''}')"><i data-lucide="check"></i>保存する</button>`);
+}
+function anvSave(id){
+  const n=val('nvName'), d=val('nvDate');
+  if(!n){toast('名前を入力してね');return;}
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){toast('日付を選んでね');return;}
+  const o={name:n,date:d,kind:segVal('nvKind')};
+  if(id){ const x=pick('annivs',id); if(!x)return; Object.assign(x,o); touch(x); }
+  else S.annivs.push(touch(Object.assign({id:uid(),deleted:false},o)));
+  closeSheet(); save(); toast(id?'更新しました':'記念日を追加しました');
+  setTimeout(openSettings,320);
+}
 function setSave(){
   S.settings=Object.assign({},S.settings,{
     anniversary:val('sAnv'),
     jointInit:Math.max(0,Number(val('sJoint'))||0),
+    milestones:segVal('sMile')==='1',
     ai:Object.assign({},S.settings.ai,{url:val('aUrl'),secret:val('aSec'),
       rate:Math.max(1,Number(val('aRate'))||160),
       area:val('aArea'),useWeb:segVal('aWeb')==='1',
@@ -2188,7 +2349,7 @@ async function resetAll(){
   if(!await askConfirm('家計簿・予定・家事・Wish・ルールをすべて消します。相手の端末からも消えます。よろしいですか？'))return;
     /* 相手の端末からも確実に消えるよう、削除マークを付けて同期する */
   const now=Date.now();
-  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog'].forEach(k=>{
+  ['expenses','events','chores','wishes','rules','payouts','moodLog','ledger','chat','aiLog','annivs'].forEach(k=>{
     S[k].forEach(x=>{ x.deleted=true; x.updatedAt=now; x.lastModifiedBy=ME; });
   });
   ['keisuke','kotomi'].forEach(u=>{ S.moods[u]={value:0,comment:'',updatedAt:now,lastModifiedBy:u}; });
