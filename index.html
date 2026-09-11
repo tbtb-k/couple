@@ -192,6 +192,38 @@ main{padding:14px 14px calc(96px + env(safe-area-inset-bottom));max-width:620px;
 .mrow{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
 .mrow.on{background:var(--bg2);border-radius:12px;padding:10px 8px}
 .mrow .e{font-size:24px;line-height:1.1;flex-shrink:0;width:30px;text-align:center}
+/* 気分の変化のおしらせ */
+.mnotice{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);padding:15px 16px;margin-bottom:12px;
+  border:1.5px solid var(--nc)}
+.mnotice .nh{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:var(--nc)}
+.mnotice .nh .x{margin-left:auto;color:var(--sub);font-size:17px;width:28px;height:28px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center}
+.mnotice .nb{display:flex;gap:11px;align-items:center;margin-top:10px}
+.mnotice .nb .e{font-size:31px;line-height:1;flex-shrink:0}
+.mnotice .nt{font-size:14px;font-weight:800;line-height:1.55}
+.mnotice .ncm{font-size:12.5px;color:var(--sub);margin-top:3px;line-height:1.6;word-break:break-word}
+.mnotice .na{font-size:12px;line-height:1.75;background:var(--bg2);border-radius:12px;padding:9px 11px;margin-top:10px}
+.mnotice .nbtns{display:flex;gap:7px;margin-top:9px;flex-wrap:wrap}
+.mnotice .nbtns button{font-size:11.5px;font-weight:800;padding:7px 12px;border-radius:99px;background:var(--bg2);color:var(--sub)}
+.mnotice .nnote{font-size:10.5px;color:var(--sub);margin-top:9px;line-height:1.6}
+/* ホームの2つ並びボタン */
+.hist-row{display:flex;gap:9px;margin-bottom:12px}
+.hist-row .hist-btn{margin-bottom:0;flex:1;min-width:0;font-size:12px;padding:11px 4px}
+/* ふたりの年表 */
+.tlsum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 2px}
+.tlsum div{background:var(--bg2);border-radius:12px;padding:9px 3px;text-align:center;font-size:10.5px;color:var(--sub)}
+.tlsum b{display:block;font-size:17px;color:var(--ink);line-height:1.35}
+.tlmo{font-size:12px;font-weight:800;color:var(--sub);margin:16px 0 2px;position:sticky;top:0;
+  background:var(--card);padding:6px 0 4px;z-index:2}
+.tl{position:relative;padding-left:24px}
+.tl:before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:var(--line);border-radius:2px}
+.tlrow{position:relative;padding:9px 0;border-bottom:1px solid var(--line)}
+.tlrow:last-child{border-bottom:0}
+.tlrow:before{content:"";position:absolute;left:-22px;top:15px;width:10px;height:10px;border-radius:50%;
+  background:var(--tc);box-shadow:0 0 0 3px var(--card)}
+.tlrow .td{font-size:10.5px;font-weight:800;color:var(--sub);letter-spacing:.02em}
+.tlrow .tt{font-size:14px;font-weight:800;line-height:1.55;margin-top:1px;word-break:break-word}
+.tlrow .ts{font-size:11.5px;color:var(--sub);margin-top:3px;line-height:1.6;word-break:break-word}
 
 /* ---------- HERO ---------- */
 .hero{background:linear-gradient(135deg,#FF9A76,#FF7C6B 45%,#F2668D);color:#fff;border-radius:24px;padding:20px;
@@ -478,10 +510,11 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='3.5（2026-09-02）';
+const APP_VERSION='3.6（2026-09-11）';
 const SCHEMA=8;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 const LS_FEED='couple_home_feed_v1', LS_FEED_SEEN='couple_home_feedseen_v1';
+const LS_MOODSEEN='couple_moodnotice_seen_v1';
 /* v1.0 で入れていたサンプルデータの見分け方 */
 const SAMPLE={
   expenses:['スーパーで買い出し','カフェでモーニング','映画チケット2枚','電車代（往復）','ティッシュ・洗剤','ことみへの誕生日プレゼント'],
@@ -514,7 +547,7 @@ const MOOD_CM=['仕事終わった！','お腹すいた','ちょっと疲れた'
 const NOTE_BG=['#FFE9D6','#FFDCE2','#DFF1E8','#E3ECFB','#F1E6FA','#FFF3C4'];
 
 let ME=null, S=null, saveTimer=null, freshInstall=false;
-const ui={tab:'home',month:null,calCur:null,calSel:null,calMode:'month',choreF:'all',wishF:'all',showBal:false};
+const ui={tab:'home',month:null,calCur:null,calSel:null,calMode:'month',choreF:'all',wishF:'all',showBal:false,tlF:'all'};
 
 /* ---------- utils ---------- */
 const $=s=>document.querySelector(s);
@@ -1523,6 +1556,136 @@ function pickNearest(ev){
     if(d<bd){bd=d;best=pt;} });
   if(best){ ui.moodSel=best.id; renderMoodBody(); }
 }
+/* ============ 気分の変化に気づくしくみ ============
+   相手が気分を更新したとき、前回との差が大きければホームにそっと出す。
+   見張るための機能ではないので、出るのはこの端末だけ。相手には通知されない。 */
+function moodDelta(){
+  if(!ME)return null;
+  const other=ME==='keisuke'?'kotomi':'keisuke';
+  const log=live('moodLog').filter(m=>m.who===other&&Number.isFinite(Number(m.v))).sort((a,b)=>a.at-b.at);
+  if(log.length<2)return null;
+  const cur=log[log.length-1], prev=log[log.length-2];
+  if(!cur.at||Date.now()-cur.at>3*864e5)return null;      /* 3日より前の記録なら、もう出さない */
+  const d=Number(cur.v)-Number(prev.v);
+  if(d<=-4||(Number(cur.v)<=-4&&d<=-2)) return {who:other,cur,prev,d,kind:'down'};
+  if(d>=6&&Number(cur.v)>=5)            return {who:other,cur,prev,d,kind:'up'};
+  return null;
+}
+function moodNoticeHTML(){
+  const n=moodDelta(); if(!n)return '';
+  if(localStorage.getItem(LS_MOODSEEN)===String(n.cur.id))return '';
+  const u=USERS[n.who], down=n.kind==='down';
+  const col=down?'#5B94D6':'#2C9E7B';
+  const sgn=v=>(Number(v)>0?'+':'')+Number(v);
+  return `<div class="mnotice" style="--nc:${col}">
+    <div class="nh"><i data-lucide="${down?'cloud-drizzle':'sun'}"></i>${esc(u.name)}の気分が${down?'下がっているみたい':'ぐんと上がりました'}
+      <button class="x" onclick="moodNoticeClose()" aria-label="閉じる">×</button></div>
+    <div class="nb"><div class="e">${moodEmoji(n.cur.v)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="nt">${sgn(n.prev.v)} → <span style="color:${col}">${sgn(n.cur.v)}</span>
+          <span style="font-size:11.5px;color:var(--sub);font-weight:700">（${moodWord(n.cur.v)}・${relTime(n.cur.at)}）</span></div>
+        <div class="ncm">${n.cur.cm?'「'+esc(n.cur.cm)+'」':'コメントはありません'}</div>
+      </div></div>
+    <div class="na">${down
+      ? 'むりに聞き出さなくて大丈夫。「おつかれさま」のひとことだけでも、ちゃんと届きます。'
+      : 'いいことがあったみたい。どうしたの？と聞いてみると、もっと嬉しいかもしれません。'}</div>
+    <div class="nbtns">
+      <button onclick="moodNoticeAsk()">💬 ${esc(aiName())}に相談する</button>
+      <button onclick="moodNoticeClose();moodHistory()">📈 記録を見る</button>
+    </div>
+    <div class="nnote">このおしらせは、あなたの端末にだけ表示されます。相手には知らされません。</div>
+  </div>`;
+}
+function moodNoticeClose(){
+  const n=moodDelta(); if(n)localStorage.setItem(LS_MOODSEEN,String(n.cur.id));
+  render();
+}
+function moodNoticeAsk(){
+  const n=moodDelta(); if(!n)return;
+  const name=uname(n.who);
+  const q=n.kind==='down'
+    ? name+'の気分が下がっているみたい。そばにいる自分にできること、何かある？'
+    : name+'の気分がすごく良さそう。この流れで一緒に楽しめること、何かない？';
+  moodNoticeClose();
+  openChat();
+  setTimeout(()=>{ const t=$('#chatIn'); if(t){ t.value=q; chatGrow(t); t.focus(); } },420);
+}
+
+/* ============ ふたりの年表 ============
+   いま持っているデータだけから組み立てる。新しく入力するものは何もない。 */
+function tlItems(){
+  const t=todayY(), out=[], st=S.settings;
+  /* これまでの予定（個人予定と給料日は入れない） */
+  live('events').filter(e=>e.date&&e.date<=t&&e.cat!=='personal'&&e.cat!=='payday').forEach(e=>{
+    const days=evDays(e);
+    out.push({date:e.date,kind:'event',c:evCat(e).c,ic:e.cat==='anniv'?'💗':'📅',
+      title:e.title||'（無題の予定）',
+      sub:[evCat(e).l,days>1?days+'日間':'',e.memo||''].filter(Boolean).join('・')});
+  });
+  /* 叶えたやりたいこと */
+  live('wishes').filter(w=>w.done).forEach(w=>{
+    const at=Number(w.doneAt)||Number(w.updatedAt)||0; if(!at)return;
+    out.push({date:ymd(new Date(at)),kind:'wish',c:'#F2668D',ic:wGen(w).e,
+      title:(w.title||'やりたいこと')+' を叶えた',sub:'やりたいことリスト・'+wGen(w).l});
+  });
+  /* 記念日と節目 */
+  if(st.anniversary&&st.anniversary<=t){
+    out.push({date:st.anniversary,kind:'mile',c:'#E8A33D',ic:'💞',
+      title:'付き合いはじめた日',sub:'ふたりのはじまり'});
+    anivsBetween(st.anniversary,t).concat(milesBetween(st.anniversary,t)).forEach(m=>{
+      out.push({date:m.date,kind:'mile',c:'#E8A33D',ic:'',title:m.title,sub:''});
+    });
+  }
+  /* とても気分がよかった日 */
+  live('moodLog').filter(m=>Number(m.v)>=8&&m.at).forEach(m=>{
+    out.push({date:ymd(new Date(m.at)),kind:'mood',c:m.who==='keisuke'?'#5B94D6':'#F2668D',
+      ic:moodEmoji(m.v),title:m.cm||'いい気分だった日',
+      sub:uname(m.who)+'の気分 +'+Number(m.v)});
+  });
+  return out.filter(x=>x.date).sort((a,b)=>b.date.localeCompare(a.date)||String(a.title).localeCompare(String(b.title)));
+}
+function timeline(){
+  if(!ui.tlF)ui.tlF='all';
+  openSheet('<h3>📖 ふたりの年表</h3><div id="tlBody"></div>'+
+    '<button class="btn line" style="width:100%;justify-content:center;margin-top:18px" onclick="closeSheet()">閉じる</button>');
+  renderTl();
+}
+function renderTl(){
+  const el=document.getElementById('tlBody'); if(!el)return;
+  const all=tlItems(), st=S.settings;
+  const F=[{v:'all',l:'すべて'},{v:'event',l:'予定'},{v:'wish',l:'叶えたこと'},{v:'mile',l:'記念日'},{v:'mood',l:'いい気分'}];
+  if(!F.some(o=>o.v===ui.tlF))ui.tlF='all';
+  const list=(ui.tlF==='all'?all:all.filter(x=>x.kind===ui.tlF)).slice(0,400);
+  const days=st.anniversary?Math.floor((new Date(todayY())-pYMD(st.anniversary))/864e5)+1:0;
+  const nDate=all.filter(x=>x.kind==='event').length;
+  const nWish=all.filter(x=>x.kind==='wish').length;
+  const chips=F.map(o=>`<button class="chip ${ui.tlF===o.v?'on':''}" onclick="ui.tlF='${o.v}';renderTl()">${o.l}</button>`).join('');
+  let body='', mo='';
+  list.forEach(x=>{
+    const m=x.date.slice(0,7);
+    if(m!==mo){ if(mo)body+='</div>'; mo=m;
+      body+=`<div class="tlmo">${Number(m.slice(0,4))}年${Number(m.slice(5,7))}月</div><div class="tl">`; }
+    const d=pYMD(x.date), wd='日月火水木金土'[d.getDay()];
+    body+=`<div class="tlrow" style="--tc:${x.c}">
+      <div class="td">${d.getDate()}日（${wd}）</div>
+      <div class="tt">${x.ic?x.ic+' ':''}${esc(x.title)}</div>
+      ${x.sub?`<div class="ts">${esc(x.sub)}</div>`:''}
+    </div>`;
+  });
+  if(mo)body+='</div>';
+  el.innerHTML=`
+    <div class="tlsum">
+      <div><b>${days?days.toLocaleString():'—'}</b>いっしょの日数</div>
+      <div><b>${nDate}</b>ふたりの予定</div>
+      <div><b>${nWish}</b>叶えたこと</div>
+    </div>
+    <div class="help" style="margin:10px 0 12px;font-size:11px">予定・やりたいこと・記念日・気分の記録から、
+      ふたりの歩みを自動でならべています。新しく入力するものはありません。</div>
+    <div class="chips">${chips}</div>
+    ${list.length?body:'<div class="empty"><div>📖</div>ここに出せる思い出がまだありません<br><span style="font-size:11px">予定を入れたり、やりたいことを達成すると、ここにたまっていきます</span></div>'}
+    ${all.length>list.length?`<div class="muted" style="text-align:center;font-size:11px;margin-top:12px">新しい方から400件を表示しています</div>`:''}`;
+  icons();
+}
 /* カレンダーの「デート」「記念日」から、いちばん近い予定を拾う */
 /* 記念日や節目ではなく、実際に登録された予定だけを「次に会う日」とする */
 function nextMeet(){
@@ -1574,9 +1737,13 @@ function renderHome(){
   const wOpen=live('wishes').filter(w=>!w.done).length;
   $('#view-home').innerHTML=
    `<div class="mood-row">${moodCard('keisuke')}${moodCard('kotomi')}</div>
-    <button class="hist-btn" onclick="moodHistory()"><i data-lucide="line-chart"></i>ふたりの気分の記録を見る</button>
-    ${feedHTML()}
+    ${moodNoticeHTML()}
+    <div class="hist-row">
+      <button class="hist-btn" onclick="moodHistory()"><i data-lucide="line-chart"></i>気分の記録</button>
+      <button class="hist-btn" onclick="timeline()"><i data-lucide="book-heart"></i>ふたりの年表</button>
+    </div>
     ${heroHTML()}
+    ${feedHTML()}
     <div class="q-grid">
       <button class="q" onclick="go('money')"><div class="t"><i data-lucide="landmark"></i>共同口座の残高</div>
         <div class="v">${ui.showBal?yen(jbal.bal):'¥ ●●●,●●●'}</div>
@@ -2050,7 +2217,7 @@ function renderWish(){
       </div>`).join(''):'<div class="empty" style="grid-column:1/-1"><div>💭</div>やりたいことを追加しよう</div>'}</div>`;
 }
 function wDone(id){
-  const w=pick('wishes',id); if(!w)return; w.done=!w.done; touch(w);
+  const w=pick('wishes',id); if(!w)return; w.done=!w.done; w.doneAt=w.done?Date.now():0; touch(w);
   saveLocal(); clearTimeout(saveTimer); saveTimer=setTimeout(()=>Cloud.push(),700);
   if(w.done){
     const el=document.getElementById('w-'+id); if(el)el.classList.add('cheer');
@@ -2078,7 +2245,7 @@ function wSave(id){
   const o={title:t,gen:segVal('wgen'),pri:Number(segVal('wpri')),url:/^https?:\/\//.test(u)?u:''};
   if(u&&!o.url){toast('リンクは https:// から始めてね');return;}
   if(id){const x=pick('wishes',id); if(!x)return; Object.assign(x,o); touch(x);}
-  else S.wishes.push(touch(Object.assign({id:uid(),deleted:false,done:false},o)));
+  else S.wishes.push(touch(Object.assign({id:uid(),deleted:false,done:false,doneAt:0},o)));
   closeSheet(); save(); toast(id?'更新しました':'追加しました');
 }
 
