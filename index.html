@@ -416,7 +416,7 @@ body.noscroll{position:fixed;left:0;right:0;width:100%;overflow:hidden}
   background:var(--ink);color:var(--bg);padding:11px 20px;border-radius:99px;font-size:13px;font-weight:700;
   opacity:0;transition:.25s;pointer-events:none;box-shadow:0 8px 22px rgba(0,0,0,.22);max-width:90vw;text-align:center}
 .toast.on{opacity:1;transform:translate(-50%,0)}
-.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-46%) scale(.95);z-index:110;background:var(--card);
+.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-46%) scale(.95);z-index:130;background:var(--card);
   border-radius:22px;padding:22px;width:min(340px,88vw);box-shadow:0 20px 50px rgba(0,0,0,.3);opacity:0;transition:.2s}
 .modal.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
 .modal p{margin:0 0 18px;font-size:15px;font-weight:700;line-height:1.6}
@@ -510,20 +510,11 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='3.6.1（2026-09-11）';
+const APP_VERSION='3.6.2（2026-09-11）';
 const SCHEMA=8;   /* データ形式の版。項目を増やしたら +1 する */
-const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
+const LS_ROOM='couple_home_room_v1';
 const LS_FEED='couple_home_feed_v1', LS_FEED_SEEN='couple_home_feedseen_v1';
 const LS_MOODSEEN='couple_moodnotice_seen_v1';
-/* v1.0 で入れていたサンプルデータの見分け方 */
-const SAMPLE={
-  expenses:['スーパーで買い出し','カフェでモーニング','映画チケット2枚','電車代（往復）','ティッシュ・洗剤','ことみへの誕生日プレゼント'],
-  events:['水族館デート🐟','ことみ 美容院','ふたりで焼肉','けいすけ 会社の飲み会','付き合った記念日💍'],
-  chores:['洗い物','洗濯を回す','ゴミ出し','掃除機をかける','トイレ・お風呂掃除','食材の買い出し'],
-  wishes:['箱根で温泉旅行','話題のパンケーキ屋さん','話題の新作映画を観る','お揃いのマグカップを買う','夏の花火大会'],
-  rules:['けんかしても、寝る前に必ず仲直りする🤝','3,000円以上の買い物は、買う前にひとこと相談する','月に1回は、ふたりで行ったことのない場所へ行く','返信は無理しなくてOK。返せるときに返す😌']
-};
-const SAMPLE_CM=['仕事終わった！今週もおつかれさま','ちょっと眠いけど元気だよ'];
 const BUILTIN_CLOUD={
   /* ルームID（＝ふたりの鍵）はここには書かない。URL末尾の #k=... から受け取る */
   config:{
@@ -563,8 +554,10 @@ const uname=id=>USERS[id]?USERS[id].name:'ふたり';
 /* 予定の終了日（未設定なら開始日と同じ）と、ある日がその期間に含まれるか */
 const evEnd=e=>(e.end&&e.end>e.date)?e.end:e.date;
 const evCovers=(e,d)=>d>=e.date&&d<=evEnd(e);
-const evCat=e=>EV_CAT[e&&e.cat]||EV_CAT.other;
-const wGen=w=>WISH_GEN[w&&w.gen]||WISH_GEN.other;
+/* 'constructor' のような特殊な語が入っていても、関数を拾わず既定値に落とす */
+const own=(o,k)=>(typeof k==='string'&&Object.prototype.hasOwnProperty.call(o,k))?o[k]:null;
+const evCat=e=>own(EV_CAT,e&&e.cat)||EV_CAT.other;
+const wGen=w=>own(WISH_GEN,w&&w.gen)||WISH_GEN.other;
 const safeUrl=u=>/^https?:\/\//i.test(String(u||''))?String(u):'';
 const wPri=w=>Math.min(3,Math.max(1,Number(w&&w.pri)||2));
 const evDays=e=>Math.round((pYMD(evEnd(e))-pYMD(e.date))/864e5)+1;
@@ -600,8 +593,21 @@ function moodWord(v){ return v>=8?'すごいいい気分':v>=5?'ごきげん':v>
 function moodColor(v){ const t=(Number(v)+10)/20; return `hsl(${210-172*t} ${58+24*t}% ${52+4*t}%)`; }
 
 /* ---------- storage ---------- */
-function saveLocal(){ try{localStorage.setItem(LS_DATA,JSON.stringify(S))}catch(e){} }
+let lsWarned=false;
+function saveLocal(){
+  try{ localStorage.setItem(LS_DATA,JSON.stringify(S)); lsWarned=false; }
+  catch(e){ if(!lsWarned){ lsWarned=true; toast('⚠️ この端末に保存できませんでした（空き容量を確認してね）'); } }
+}
+/* 会話とAI利用の記録を切り詰める。起動時だけでなく保存のたびに見ないと、
+   アプリを開きっぱなしにしている間にクラウドの1件あたりの上限を超えてしまう */
+function trimLog(k,keep){
+  const a=(S[k]||[]).filter(x=>!x.deleted).sort((x,y)=>(y.at||y.updatedAt||0)-(x.at||x.updatedAt||0));
+  if(a.length<=keep)return;
+  const nw=Date.now();
+  a.slice(keep).forEach(x=>{ x.deleted=true; x.updatedAt=nw; x.lastModifiedBy=ME||x.lastModifiedBy; });
+}
 function save(opts){
+  if((S.chat||[]).length>360||(S.aiLog||[]).length>900){ trimLog('chat',300); trimLog('aiLog',800); }
   saveLocal();
   clearTimeout(saveTimer); saveTimer=setTimeout(()=>Cloud.push(),700);
   if(!opts||opts.render!==false) render();
@@ -618,7 +624,7 @@ function seed(){
       payday:{on:true,day:25,shiftWeekend:true,label:'給料日'},
       milestones:true,
       ai:{url:'',secret:'',name:'AI',persona:'',area:'',useWeb:true,sendPlans:true,sendMood:true,sendMoney:false,rate:160},
-      updatedAt:now, lastModifiedBy:'keisuke'},
+      updatedAt:0, lastModifiedBy:'keisuke'},
     moods:{
       keisuke:{value:0,comment:'',updatedAt:0,lastModifiedBy:'keisuke'},
       kotomi :{value:0,comment:'',updatedAt:0,lastModifiedBy:'kotomi'}
@@ -688,12 +694,14 @@ const ARRAYS=['expenses','events','chores','wishes','rules','payouts','moodLog',
 function mergeState(remote){
   if(!remote)return false;
   /* 相手がこちらの知らない形式を使っていたら警告（データは触らない） */
-  if(Number(remote.schema||1)>SCHEMA){ schemaWarn=true; setTimeout(showUpdBar,50); }
+  /* 版を覚えておかないと、古い端末が押し戻した瞬間に警告が出なくなる */
+  if(Number(remote.schema||1)>SCHEMA){ schemaWarn=true; S.schema=Number(remote.schema); setTimeout(showUpdBar,50); }
   let need=false;
   ARRAYS.forEach(k=>{
-    const rid=new Set((remote[k]||[]).map(x=>x&&x.id));
+    const rm=new Map(); (remote[k]||[]).forEach(x=>{ if(x&&x.id)rm.set(x.id,x); });
     S[k]=mergeArr(S[k],remote[k]);
-    if(S[k].some(x=>!rid.has(x.id))) need=true;      /* 相手が知らない項目がこちらにある */
+    /* 追加だけでなく、編集・削除（同じIDで更新が新しい）も押し戻す */
+    if(S[k].some(x=>{ const r=rm.get(x.id); return !r||(x.updatedAt||0)>(r.updatedAt||0); })) need=true;
   });
   ['keisuke','kotomi'].forEach(u=>{
     const r=remote.moods&&remote.moods[u]; if(r&&(r.updatedAt||0)>(S.moods[u].updatedAt||0)) S.moods[u]=r;
@@ -708,9 +716,14 @@ function mergeState(remote){
       {payday:Object.assign({},base.payday,remote.settings.payday||{}),
        ai:Object.assign({},base.ai,remote.settings.ai||{})});
   }else if((S.settings.updatedAt||0)>((remote.settings||{}).updatedAt||0)) need=true;
-  // 30日以上前の削除済みを掃除
-  const cut=Date.now()-30*864e5;
-  ARRAYS.forEach(k=>{ S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<cut)); });
+  /* 削除済みの掃除。30日たったら中身を捨てて印だけ残し、400日で完全に消す。
+     印を早く消しすぎると、久しぶりに開いた端末が「まだ生きている」と思って復活させてしまう */
+  const slim=Date.now()-30*864e5, gone=Date.now()-400*864e5;
+  ARRAYS.forEach(k=>{
+    S[k]=S[k].filter(x=>!(x.deleted&&(x.updatedAt||0)<gone))
+      .map(x=>(x&&x.deleted&&(x.updatedAt||0)<slim&&Object.keys(x).length>4)
+        ? {id:x.id,deleted:true,updatedAt:x.updatedAt||0,lastModifiedBy:x.lastModifiedBy||''} : x);
+  });
   return need;
 }
 const live=k=>(S[k]||[]).filter(x=>!x.deleted);
@@ -758,7 +771,6 @@ const Cloud={
             const need=mergeState(JSON.parse(d.payload));
             freshInstall=false; saveLocal(); render(); toast('☁️ 同期しました');
             if(need) setTimeout(()=>this.push(),1200);
-            setTimeout(offerSampleCleanup,600);
           }catch(e){}
           if(this._pending){ this._pending=false; this.push(); }
           return;
@@ -776,7 +788,8 @@ const Cloud={
       if(this._unsubF)this._unsubF();
       this._unsubF=fs.onSnapshot(fs.doc(this._db,'feeds',c.room),snap=>{
         const d=snap.data(); if(!d||!d.payload)return;
-        try{ FEED=JSON.parse(d.payload); localStorage.setItem(LS_FEED,d.payload); render(); }catch(e){}
+        try{ const f=JSON.parse(d.payload);
+          if(f&&Array.isArray(f.ideas)){ FEED=f; localStorage.setItem(LS_FEED,d.payload); render(); } }catch(e){}
       },()=>{});
     }catch(e){ this.status='err'; this.dot(); toast('📴 オフラインです。この端末に保存しています'); }
   },
@@ -819,7 +832,8 @@ function tryLogin(){
     setTimeout(()=>{$('.lg-card').classList.remove('shake');buf='';drawDots();},420);
   }
 }
-function logout(){ localStorage.removeItem(LS_USER); Cloud.stop(); ME=null;
+function logout(){ try{closeChat()}catch(e){} closeSheet();
+  localStorage.removeItem(LS_USER); Cloud.stop(); ME=null;
   clearInterval(window._sbT); clearInterval(window._cdT); const sb=document.getElementById('syncBar'); if(sb){sb.className='hidden';sb.innerHTML='';} $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
 function boot(id){
   ME=id; const _raw=loadLocal(); freshInstall=!_raw; S=ensure(_raw); saveLocal();
@@ -828,7 +842,7 @@ function boot(id){
   $('#whoBadge').innerHTML=`${u.emoji} ${u.name}として操作中`;
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
   ui.month=todayY().slice(0,7); ui.calCur=todayY().slice(0,7); ui.calSel=todayY();
-  bootAt=Date.now(); render(); Cloud.init(); setTimeout(offerSampleCleanup,900);
+  bootAt=Date.now(); render(); Cloud.init();
   setTimeout(maybeCheckUpdate,2500);
   clearInterval(window._sbT); window._sbT=setInterval(updateSyncBar,4000);
 }
@@ -891,14 +905,28 @@ function updateSyncBar(){
 
 /* ================== AIチャット ================== */
 let aiBusy=false, pendingTool=null;
+/* 返事が返ってこないまま握られると、チャットが二度と使えなくなるので必ず時間で打ち切る */
+function aiFetch(url,opt,ms){
+  const c=new AbortController();
+  const t=setTimeout(()=>c.abort(),ms||60000);
+  return fetch(url,Object.assign({},opt,{signal:c.signal}))
+    .then(r=>{clearTimeout(t);return r;},e=>{clearTimeout(t);throw e;});
+}
+function aiErr(e){
+  if(e&&(e.name==='AbortError'||/abort/i.test(String(e.message||''))))return '時間内に返事がありませんでした';
+  return (e&&e.message)||'接続できませんでした';
+}
 let FEED=(function(){ try{return JSON.parse(localStorage.getItem(LS_FEED)||'null')}catch(e){return null} })();
 function feedHidden(){ return FEED && Number(localStorage.getItem(LS_FEED_SEEN)||0)>=Number(FEED.at||0); }
 function feedClose(){ if(FEED)localStorage.setItem(LS_FEED_SEEN,String(FEED.at||Date.now())); render(); }
 function feedAddWish(n){
   const i=(FEED&&FEED.ideas||[])[n]; if(!i)return;
-  S.wishes.push(touch({id:uid(),deleted:false,title:i.title,
+  const t=String(i.title||'').trim().slice(0,60); if(!t)return;
+  /* 二度押しで同じものが2件できないように */
+  if(live('wishes').some(w=>w.title===t)){ toast('もうリストに入っています'); return; }
+  S.wishes.push(touch({id:uid(),deleted:false,title:t,
     gen:['trip','food','movie','shop','other'].includes(i.gen)?i.gen:'other',
-    pri:2,url:i.q?'https://www.google.com/maps/search/'+encodeURIComponent(i.q):'',done:false}));
+    pri:2,url:i.q?'https://www.google.com/maps/search/'+encodeURIComponent(i.q):'',done:false,doneAt:0}));
   save(); toast('やりたいことに追加しました');
 }
 function feedAsk(n){
@@ -906,6 +934,7 @@ function feedAsk(n){
   openChat(); setTimeout(()=>{ const t=$('#chatIn'); if(t){t.value='「'+i.title+'」について、もう少し詳しく教えて';chatGrow(t);t.focus();} },420);
 }
 function feedHTML(){
+  if(FEED&&!Array.isArray(FEED.ideas))FEED=null;      /* 壊れた配信でホームが落ちないように */
   if(!FEED||!FEED.ideas||!FEED.ideas.length||feedHidden())return '';
   const d=new Date(FEED.at||Date.now());
   return `<div class="feed">
@@ -914,7 +943,7 @@ function feedHTML(){
       <button class="x" onclick="feedClose()" aria-label="閉じる">×</button></div>
     ${FEED.greeting?`<div class="greet">${esc(FEED.greeting)}</div>`:''}
     ${FEED.ideas.map((i,n)=>`<div class="idea">
-      <div class="it">${WISH_GEN[i.gen]?WISH_GEN[i.gen].e:'✨'} ${esc(i.title)}</div>
+      <div class="it">${wGen({gen:i.gen}).e} ${esc(i.title)}</div>
       <div class="iw">${esc(i.why||'')}</div>
       <div class="ib">
         <button onclick="feedAddWish(${n})">＋ やりたいことに追加</button>
@@ -964,7 +993,7 @@ function mdLite(t){
     const url=b.replace(/&amp;/g,'&').replace(/&#x2F;/g,'/');
     return /^https?:\/\//.test(url) ? `<a href="${esc(url)}" target="_blank" rel="noopener">${a}</a>` : m;
   });
-  h=h.replace(/\*\*([^*]{1,300})\*\*/g,'<strong>$1</strong>');
+  h=h.replace(/\*\*([^*]{1,300})\*\*/g,(m,a)=>'<strong>'+a+'</strong>');
   return h.replace(/\n/g,'<br>');
 }
 function aiContext(){
@@ -980,9 +1009,10 @@ function aiContext(){
     const up=live('events').filter(e=>evEnd(e)>=todayY())
       .sort((x,y)=>x.date.localeCompare(y.date)).slice(0,8);
     if(up.length)L.push('今後の予定：'+up.map(e=>`${e.date} ${e.title}（${evCat(e).l}）`).join(' / '));
-    const w=live('wishes').filter(x=>!x.done);
+    /* 件数が増えても、後ろに書いてある「守ってほしいこと」が押し出されないよう上限を設ける */
+    const w=live('wishes').filter(x=>!x.done).slice(0,40);
     if(w.length)L.push('やりたいことリスト（未達成）：'+w.map(x=>`${x.title}（${wGen(x).l}）`).join(' / '));
-    const done=live('wishes').filter(x=>x.done);
+    const done=live('wishes').filter(x=>x.done).slice(-20);
     if(done.length)L.push('達成ずみ：'+done.map(x=>x.title).join(' / '));
   }
   if(a.sendMood!==false){
@@ -991,8 +1021,8 @@ function aiContext(){
   }
   if(a.area)L.push(`ふたりの生活圏：${a.area}（お出かけの提案はこのあたりを基準に）`);
   if(a.sendMoney)L.push(`ふたりの共同口座の残高：およそ ${yen(jointBalance().bal)}`);
-  const r=live('rules'); if(r.length)L.push('ふたりの約束事：'+r.map(x=>x.text).join(' / '));
-  return L.join('\n');
+  const r=live('rules').slice(0,30); if(r.length)L.push('ふたりの約束事：'+r.map(x=>x.text).join(' / '));
+  return L.join('\n').slice(0,6000);
 }
 function aiName(){ const n=((S.settings.ai||{}).name||'').trim(); return n||'AI'; }
 function aiSystem(){
@@ -1126,20 +1156,37 @@ function renderChat(force){
   else if(j) j.classList.add('on');
   $('#chatSend').disabled=aiBusy;
 }
+/* AIが返した値をここで1回だけ整える。確認カードと実際の保存で、必ず同じ結果を使う */
+const EV_TOOL_CAT=['date','personal','anniv','other'];
+const WISH_TOOL_GEN=['trip','food','movie','shop','other'];
+function normEvent(i){
+  i=i||{};
+  const date=/^\d{4}-\d{2}-\d{2}$/.test(String(i.date||''))?String(i.date):'';
+  const end=(date&&/^\d{4}-\d{2}-\d{2}$/.test(String(i.end||''))&&String(i.end)>date)?String(i.end):'';
+  return {title:String(i.title||'').trim().slice(0,60),date,end,
+    time:/^\d{2}:\d{2}$/.test(String(i.time||''))?String(i.time):'',
+    cat:EV_TOOL_CAT.indexOf(i.cat)>=0?i.cat:'other',
+    memo:String(i.memo||'').slice(0,120)};
+}
+function normWish(i){
+  i=i||{};
+  return {title:String(i.title||'').trim().slice(0,60),
+    gen:WISH_TOOL_GEN.indexOf(i.gen)>=0?i.gen:'other',
+    pri:Math.min(3,Math.max(1,Number(i.pri)||2)),
+    url:/^https?:\/\//.test(String(i.url||''))?String(i.url):'',done:false,doneAt:0};
+}
 function toolPreview(u){
-  const i=u.input||{};
   if(u.name==='add_event'){
-    const c=EV_CAT[i.cat]||EV_CAT.other;
+    const o=normEvent(u.input), c=evCat(o);
     return `<div class="tprev"><div class="tp-k">📅 カレンダーに追加</div>
-      <div class="tp-t">${esc(i.title||'')}</div>
-      <div class="tp-s">${esc(i.date||'')}${(i.end&&i.end>i.date)?' 〜 '+esc(i.end):''}${i.time?' '+esc(i.time):''} ・ ${c.l}</div>
-      ${i.memo?`<div class="tp-s">${esc(i.memo)}</div>`:''}</div>`;
+      <div class="tp-t">${esc(o.title||'（タイトルなし）')}</div>
+      <div class="tp-s">${o.date?esc(o.date):'<b style="color:var(--accent)">日付が読み取れません</b>'}${o.end?' 〜 '+esc(o.end):''}${o.time?' '+esc(o.time):''} ・ ${c.l}</div>
+      ${o.memo?`<div class="tp-s">${esc(o.memo)}</div>`:''}</div>`;
   }
-  const g=WISH_GEN[i.gen]||WISH_GEN.other;
-  const pri=Math.min(3,Math.max(1,Number(i.pri)||2));
+  const o=normWish(u.input), g=wGen(o);
   return `<div class="tprev"><div class="tp-k">💗 やりたいことに追加</div>
-    <div class="tp-t">${esc(i.title||'')}</div>
-    <div class="tp-s">${g.e}${g.l} ・ ${'★'.repeat(pri)}${'☆'.repeat(3-pri)}</div></div>`;
+    <div class="tp-t">${esc(o.title||'（タイトルなし）')}</div>
+    <div class="tp-s">${g.e}${g.l} ・ ${'★'.repeat(o.pri)}${'☆'.repeat(3-o.pri)}</div></div>`;
 }
 function toolCardHTML(){
   if(!pendingTool)return '';
@@ -1149,38 +1196,37 @@ function toolCardHTML(){
       <button class="btn" onclick="toolConfirm(true)">追加する</button></div></div>`;
 }
 function applyTools(uses){
-  const done=[];
+  const done=[], skip=[];
   uses.forEach(u=>{
-    const i=u.input||{};
     if(u.name==='add_event'){
-      const date=/^\d{4}-\d{2}-\d{2}$/.test(i.date||'')?i.date:todayY();
-      const o={title:String(i.title||'予定').slice(0,60),date,
-        end:(/^\d{4}-\d{2}-\d{2}$/.test(i.end||'')&&i.end>date)?i.end:'',
-        time:/^\d{2}:\d{2}$/.test(i.time||'')?i.time:'',
-        cat:EV_CAT[i.cat]?i.cat:'other',memo:String(i.memo||'').slice(0,120)};
+      const o=normEvent(u.input);
+      /* 日付やタイトルが読み取れないときは、勝手に今日にせず捨てる（確認カードと結果を一致させる） */
+      if(!o.title||!o.date){ skip.push('予定'); return; }
       S.events.push(touch(Object.assign({id:uid(),deleted:false},o)));
       ui.calCur=o.date.slice(0,7); ui.calSel=o.date;   /* 追加した予定がすぐ見えるように */
       done.push(`「${o.title}」を ${Number(o.date.slice(5,7))}/${Number(o.date.slice(8))} の予定に`);
     }else if(u.name==='add_wish'){
-      const o={title:String(i.title||'').slice(0,60),gen:WISH_GEN[i.gen]?i.gen:'other',
-        pri:Math.min(3,Math.max(1,Number(i.pri)||2)),
-        url:/^https?:\/\//.test(i.url||'')?i.url:'',done:false};
-      if(!o.title)return;
+      const o=normWish(u.input);
+      if(!o.title){ skip.push('やりたいこと'); return; }
       S.wishes.push(touch(Object.assign({id:uid(),deleted:false},o)));
       done.push(`「${o.title}」をやりたいことに`);
-    }
+    }else skip.push('不明な操作');
   });
-  return done;
+  return {done,skip};
 }
 async function toolConfirm(ok){
   const pt=pendingTool; if(!pt||aiBusy)return;
   pendingTool=null;
   let results;
   if(ok){
-    const done=applyTools(pt.uses);
-    S.chat.push(touch({id:uid(),role:'ai',who:'',text:'✅ '+done.join('、')+' 追加しました。',at:Date.now(),deleted:false}));
-    results=pt.uses.map(u=>({type:'tool_result',tool_use_id:u.id,content:'追加しました'}));
-    toast('追加しました');
+    const r=applyTools(pt.uses);
+    const msg=r.done.length
+      ? '✅ '+r.done.join('、')+' 追加しました。'+(r.skip.length?`（${r.skip.length}件は内容が読み取れず追加できませんでした）`:'')
+      : '⚠️ 内容が読み取れなかったので、追加できませんでした。';
+    S.chat.push(touch({id:uid(),role:'ai',who:'',text:msg,at:Date.now(),deleted:false}));
+    results=pt.uses.map(u=>({type:'tool_result',tool_use_id:u.id,
+      content:r.done.length?'追加しました':'日付やタイトルが正しくないため追加できませんでした。ユーザーに確認して、日付は YYYY-MM-DD で指定してください。'}));
+    toast(r.done.length?'追加しました':'追加できませんでした');
   }else{
     S.chat.push(touch({id:uid(),role:'ai',who:'',text:'（追加はやめました）',at:Date.now(),deleted:false}));
     results=pt.uses.map(u=>({type:'tool_result',tool_use_id:u.id,
@@ -1190,15 +1236,20 @@ async function toolConfirm(ok){
   aiBusy=true; renderChat(true);
   try{
     const a=S.settings.ai||{};
-    const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
+    const hist=pt.history.concat([{role:'assistant',content:pt.raw},{role:'user',content:results}]);
+    const r=await aiFetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({secret:a.secret,system:aiSystem(),useTools:true,
-        messages:pt.history.concat([{role:'assistant',content:pt.raw},{role:'user',content:results}])})});
-    const d=await r.json().catch(()=>({}));
+        useWeb:a.useWeb!==false,city:a.area||'',messages:hist})});
+    const d=await r.json().catch(()=>({error:'返事を読み取れませんでした'}));
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     if(d.text) S.chat.push(touch({id:uid(),role:'ai',who:'',text:d.text,srcs:d.sources||[],at:Date.now(),deleted:false}));
+    /* 続けてもう一度「追加していい？」と言ってくることがあるので、それも拾う */
+    const more=(d.content||[]).filter(c=>c&&c.type==='tool_use');
+    if(more.length) pendingTool={uses:more,raw:d.content,history:hist};
+    else if(!d.text) S.chat.push(touch({id:uid(),role:'ai',who:'',text:'（返答が空でした）',at:Date.now(),deleted:false}));
     if(d.usage) S.aiLog.push(touch({id:uid(),at:Date.now(),in:Number(d.usage.in)||0,out:Number(d.usage.out)||0,sc:Number(d.usage.searches)||0,deleted:false}));
     save({render:false});
-  }catch(e){ toast('AIエラー：'+(e.message||'')); }
+  }catch(e){ toast('AIエラー：'+aiErr(e)); }
   aiBusy=false; renderChat(true);
 }
 async function aiSend(preset){
@@ -1215,7 +1266,7 @@ async function aiSend(preset){
   aiBusy=true; pendingTool=null; renderChat(true);
   const history=buildMsgs();
   try{
-    const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
+    const r=await aiFetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({secret:a.secret,system:aiSystem(),useTools:true,
         useWeb:a.useWeb!==false,city:a.area||'',messages:history})});
     const d=await r.json().catch(()=>({error:'返事を読み取れませんでした'}));
@@ -1232,7 +1283,7 @@ async function aiSend(preset){
     const mine=S.chat.find(m=>m.id===myId);
     if(mine){ mine.deleted=true; touch(mine); save({render:false}); }
     if(!preset){ inp.value=text; chatGrow(inp); }
-    toast('AIエラー：'+(e.message||'接続できませんでした'));
+    toast('AIエラー：'+aiErr(e));
   }
   aiBusy=false; renderChat(true);
 }
@@ -1240,10 +1291,11 @@ async function aiSend(preset){
 async function bkCall(body){
   const a=S.settings.ai||{};
   if(!a.url||!a.secret)throw new Error('先に中継役の設定をしてください');
-  const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
-    body:JSON.stringify(Object.assign({secret:a.secret},body))});
+  const r=await aiFetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify(Object.assign({secret:a.secret},body))},90000);
   const d=await r.json().catch(()=>({}));
-  if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+  /* 中継役は失敗を HTTP 200 + {ok:false, reason} で返すことがある。ここで拾わないと理由が消える */
+  if(!r.ok||d.error||d.ok===false)throw new Error(d.error||d.reason||('HTTP '+r.status));
   return d;
 }
 async function bkNow(){
@@ -1251,13 +1303,13 @@ async function bkNow(){
   try{ const d=await bkCall({runBackup:true});
     await askConfirm('✅ バックアップを保存しました。\n\n共同口座 '+d.counts.ledger+'件 / 予定 '+d.counts.events+
       '件 / 家事 '+d.counts.chores+'件 / やりたいこと '+d.counts.wishes+'件 / 気分 '+d.counts.moodLog+'件');
-  }catch(e){ await askConfirm('❌ '+e.message); }
+  }catch(e){ await askConfirm('❌ '+aiErr(e)); }
 }
 async function bkList(){
   toast('確認しています…');
   let list;
   try{ list=(await bkCall({listBackups:true})).list||[]; }
-  catch(e){ await askConfirm('❌ '+e.message); return; }
+  catch(e){ await askConfirm('❌ '+aiErr(e)); return; }
   if(!list.length){ await askConfirm('まだバックアップがありません。\n「今すぐ保存」を一度押してみてください。'); return; }
   const f=t=>{const d=new Date(t);return `${d.getMonth()+1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;};
   openSheet(`<h3>🛟 バックアップから戻す</h3>
@@ -1276,10 +1328,23 @@ async function bkRestore(slot,label){
     expJSON();                                   /* 念のため、いまの状態を先に書き出す */
     const d=await bkCall({getBackup:slot});
     if(!d.data)throw new Error('中身が空でした');
-    S=ensure(d.data); saveLocal(); Cloud.push();
+    /* そのまま入れると、各項目の更新時刻が古いままなので相手の端末が「新しい」と判断して押し戻し、
+       戻したはずのデータが元に戻ってしまう。戻した内容を「いま作ったもの」として刻み直し、
+       バックアップに無い項目には削除の印を付けて、相手にも同じ状態が伝わるようにする */
+    const now=Date.now(), old=S;
+    const R=ensure(JSON.parse(JSON.stringify(d.data)));
+    ARRAYS.forEach(k=>{
+      const ids=new Set((R[k]||[]).map(x=>x&&x.id));
+      R[k].forEach(x=>{ x.updatedAt=now; x.lastModifiedBy=ME; });
+      (old[k]||[]).forEach(x=>{ if(x&&x.id&&!ids.has(x.id))
+        R[k].push({id:x.id,deleted:true,updatedAt:now,lastModifiedBy:ME}); });
+    });
+    ['keisuke','kotomi'].forEach(u=>{ R.moods[u]=Object.assign({},R.moods[u],{updatedAt:now,lastModifiedBy:ME}); });
+    R.settings=Object.assign({},R.settings,{updatedAt:now,lastModifiedBy:ME});
+    S=R; saveLocal(); Cloud.push();
     closeSheet(); render();
     await askConfirm('✅ 戻しました。\n（直前のデータは書き出したファイルに入っています）');
-  }catch(e){ await askConfirm('❌ 戻せませんでした：'+e.message); }
+  }catch(e){ await askConfirm('❌ 戻せませんでした：'+aiErr(e)); }
 }
 
 async function feedNow(){
@@ -1287,8 +1352,8 @@ async function feedNow(){
   if(!a.url||!a.secret){toast('先に中継役の設定をしてね');return;}
   toast('おすすめを作っています…（30秒ほどかかります）');
   try{
-    const r=await fetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({secret:a.secret,runWeekly:true})});
+    const r=await aiFetch(a.url,{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({secret:a.secret,runWeekly:true})},120000);
     const d=await r.json().catch(()=>({}));
     if(d.ok){
       localStorage.removeItem(LS_FEED_SEEN); closeSheet(); go('home');
@@ -1299,15 +1364,15 @@ async function feedNow(){
     }else{
       await askConfirm('❌ 作れませんでした。\n\n'+(d.error||'原因が分かりませんでした'));
     }
-  }catch(e){ await askConfirm('❌ 中継役に接続できませんでした'); }
+  }catch(e){ await askConfirm('❌ '+aiErr(e)); }
 }
 async function aiTest(){
   const url=val('aUrl'), sec=val('aSec');
   if(!url){toast('中継役のURLを入れてね');return;}
   toast('確認しています…');
   try{
-    const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({secret:sec,ping:true})});
+    const r=await aiFetch(url,{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({secret:sec,ping:true})},30000);
     const d=await r.json().catch(()=>({}));
     if(d.ok){
       await askConfirm(d.apiKey==='設定あり'
@@ -1328,29 +1393,6 @@ async function clearChat(){
   pendingTool=null; save({render:false}); renderChat(true); toast('会話を消しました');
 }
 
-/* ---------- サンプルデータの掃除（v1.0 からの移行用） ---------- */
-function sampleHits(){
-  const out=[];
-  Object.keys(SAMPLE).forEach(k=>live(k).forEach(x=>{
-    if(SAMPLE[k].includes(k==='rules'?x.text:x.title)) out.push({k,id:x.id});
-  }));
-  return out;
-}
-async function offerSampleCleanup(){
-  if(localStorage.getItem(LS_SAMPLE))return;
-  if(!$('#mask').classList.contains('hidden'))return;
-  const hits=sampleHits(); if(hits.length<3)return;
-  const ok=await askConfirm('最初から入っていたサンプルデータが '+hits.length+'件 見つかりました。まとめて削除しますか？（ご自身で追加したデータは消えません）');
-  localStorage.setItem(LS_SAMPLE,'1');
-  if(!ok)return;
-  const now=Date.now();
-  hits.forEach(hh=>{ const o=S[hh.k].find(x=>x.id===hh.id);
-    if(o){o.deleted=true;o.updatedAt=now;o.lastModifiedBy=ME;} });
-  ['keisuke','kotomi'].forEach(u=>{ if(SAMPLE_CM.includes(S.moods[u].comment))
-    S.moods[u]={value:0,comment:'',updatedAt:now,lastModifiedBy:u}; });
-  save(); toast('サンプルデータを削除しました');
-}
-
 /* ---------- sheet / modal ---------- */
 function openSheet(html){
   const sh=$('#sheet'), mk=$('#mask');
@@ -1358,32 +1400,50 @@ function openSheet(html){
   mk.classList.remove('hidden'); requestAnimationFrame(()=>{mk.classList.add('on');sh.classList.add('on');});
   icons();
 }
+function hideMaskSoon(){
+  const mk=$('#mask');
+  clearTimeout(window._mkT);
+  /* 直後に確認ダイアログが覆いを出したときは消さない（消すと背景が押せてしまう） */
+  window._mkT=setTimeout(()=>{ if(!mk.classList.contains('on'))mk.classList.add('hidden'); },240);
+}
 function closeSheet(){
   const sh=$('#sheet'), mk=$('#mask'), md=$('#modal');
-  sh.classList.remove('on'); mk.classList.remove('on'); md.classList.add('hidden'); md.classList.remove('on');
-  setTimeout(()=>mk.classList.add('hidden'),240);
+  sh.classList.remove('on'); md.classList.add('hidden'); md.classList.remove('on');
+  /* 確認ダイアログを開いたまま閉じられた場合、待っている処理に「やめる」を返す */
+  if(cfBusy){ const f=cfDone; cfBusy=false; cfDone=null; if(f)f(false,true); }
+  mk.classList.remove('on');
+  hideMaskSoon();
 }
+let cfBusy=false, cfDone=null;
 function askConfirm(msg){
+  /* 前の確認が出たままなら重ねない（重ねると先の確認が宙に浮いて永久に返事が来ない） */
+  if(cfBusy)return Promise.resolve(false);
+  cfBusy=true;
   return new Promise(res=>{
     const md=$('#modal'), mk=$('#mask');
     md.innerHTML=`<p>${esc(msg)}</p><div class="row">
       <button class="btn line" id="cNo">やめる</button><button class="btn" id="cYes">はい</button></div>`;
     mk.classList.remove('hidden'); md.classList.remove('hidden');
     requestAnimationFrame(()=>{mk.classList.add('on');md.classList.add('on')});
-    const fin=v=>{
+    const fin=(v,quiet)=>{
+      if(cfDone!==fin&&!quiet)return;
+      cfBusy=false; cfDone=null;
       md.classList.remove('on'); md.classList.add('hidden');
       /* シートが開いたままなら、覆いは残す（残さないとシートを閉じられなくなる） */
       const sheetOpen=$('#sheet').classList.contains('on');
-      if(!sheetOpen){ mk.classList.remove('on'); setTimeout(()=>mk.classList.add('hidden'),240); }
+      if(!sheetOpen){ mk.classList.remove('on'); hideMaskSoon(); }
       $('#mask').onclick=closeSheet;
       res(v);};
+    cfDone=fin;
     $('#cYes').onclick=()=>fin(true); $('#cNo').onclick=()=>fin(false);
     mk.onclick=()=>fin(false);
   });
 }
 function seg(name,opts,cur,cb){
-  return `<div class="seg" data-seg="${name}">`+opts.map(o=>
-    `<button type="button" data-v="${esc(o.v)}" class="${o.v===cur?'on':''}" onclick="segPick(this)${cb?';'+cb+'()':''}">${esc(o.l)}</button>`).join('')+`</div>`;
+  /* 古いデータだと cur が選択肢に無いことがある。そのときは先頭を選ぶ（空の値が保存されるのを防ぐ） */
+  const has=opts.some(o=>String(o.v)===String(cur));
+  return `<div class="seg" data-seg="${name}">`+opts.map((o,i)=>
+    `<button type="button" data-v="${esc(o.v)}" class="${(has?String(o.v)===String(cur):i===0)?'on':''}" onclick="segPick(this)${cb?';'+cb+'()':''}">${esc(o.l)}</button>`).join('')+`</div>`;
 }
 function segPick(b){ [...b.parentNode.children].forEach(x=>x.classList.remove('on')); b.classList.add('on'); }
 function segVal(name){ const e=document.querySelector(`[data-seg="${name}"] .on`); return e?e.dataset.v:''; }
@@ -1657,7 +1717,7 @@ function renderTl(){
   if(!F.some(o=>o.v===ui.tlF))ui.tlF='all';
   const src=ui.tlF==='all'?all:all.filter(x=>x.kind===ui.tlF);
   const list=src.slice(0,400);
-  const days=st.anniversary?Math.floor((new Date(todayY())-pYMD(st.anniversary))/864e5)+1:0;
+  const days=st.anniversary?Math.floor((pYMD(todayY())-pYMD(st.anniversary))/864e5)+1:0;
   const nDate=all.filter(x=>x.kind==='event').length;
   const nWish=all.filter(x=>x.kind==='wish').length;
   const chips=F.map(o=>`<button class="chip ${ui.tlF===o.v?'on':''}" onclick="ui.tlF='${o.v}';renderTl()">${o.l}</button>`).join('');
@@ -1711,7 +1771,7 @@ function heroHTML(){
   }
   let an='';
   if(st.anniversary){
-    const days=Math.floor((new Date(todayY())-pYMD(st.anniversary))/864e5)+1;
+    const days=Math.floor((pYMD(todayY())-pYMD(st.anniversary))/864e5)+1;
     an=`<div class="anv"><span style="font-size:13px">付き合って</span><b>${days.toLocaleString()}</b><span style="font-size:15px;font-weight:800">日目</span></div>
         <div class="next-mile">${st.anniversary.replace(/-/g,'/')}から</div>`;
   }
@@ -1774,7 +1834,7 @@ function paydayDate(y,m){
 }
 /* 記念日・誕生日。毎年その日に出る（2/29は平年だと2/28に寄せる） */
 const ANV_KIND={birthday:{l:'誕生日',e:'🎂'},anniv:{l:'記念日',e:'💍'},other:{l:'その他',e:'🎉'}};
-const anvKind=a=>ANV_KIND[a&&a.kind]||ANV_KIND.other;
+const anvKind=a=>own(ANV_KIND,a&&a.kind)||ANV_KIND.other;
 function anivOn(a,year){
   const m=Number(String(a.date).slice(5,7)), d=Number(String(a.date).slice(8,10));
   if(!m||!d)return null;
@@ -1867,9 +1927,9 @@ function ledIcon(x){
        : badge(x.paidBy,uname(x.paidBy)+'が立替');
 }
 function renderMoney(){
-  const inM=x=>ui.month==='all'||x.date.startsWith(ui.month);
+  const inM=x=>ui.month==='all'||String(x.date||'').startsWith(ui.month);
   const all=LED().filter(x=>x.type!=='personal');
-  const list=all.filter(inM).sort((a,b)=>b.date.localeCompare(a.date)||b.updatedAt-a.updatedAt);
+  const list=all.filter(inM).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||(b.updatedAt||0)-(a.updatedAt||0));
   const sum=arr=>arr.reduce((a,b)=>a+(Number(b.amount)||0),0);
   const mIn=sum(list.filter(x=>x.type==='in'));
   const mOut=sum(list.filter(x=>x.type==='out'));
@@ -1955,11 +2015,14 @@ function renderMoney(){
       <button class="btn sm line" style="margin-top:8px" onclick="clearPersonal()">まとめて削除する</button></div></div>`:''}`;
 }
 async function markPaid(who){
-  const t=LED().filter(x=>x.type==='out'&&x.paidBy===who&&x.reim==='wait');
-  const amt=t.reduce((a,b)=>a+(Number(b.amount)||0),0);
+  const ids=LED().filter(x=>x.type==='out'&&x.paidBy===who&&x.reim==='wait').map(x=>x.id);
+  const amt=LED().filter(x=>ids.indexOf(x.id)>=0).reduce((a,b)=>a+(Number(b.amount)||0),0);
   if(!await askConfirm(uname(who)+'さんへ '+yen(amt)+' を共同口座から振り込みましたか？\n残高から差し引かれます。'))return;
-  t.forEach(x=>{ x.reim='done'; touch(x); });
-  save(); toast('振込済みにしました');
+  /* 確認している間に相手の更新が届くと掴んでいた行が入れ替わるので、IDから引き直す */
+  let c=0;
+  ids.forEach(id=>{ const x=(S.ledger||[]).find(v=>v.id===id&&!v.deleted);
+    if(x&&x.reim==='wait'){ x.reim='done'; touch(x); c++; } });
+  save(); toast(c?'振込済みにしました':'対象の記録が変わっていました');
 }
 async function clearPersonal(){
   if(!await askConfirm('共同口座に関係のない個人の支出をすべて削除します。よろしいですか？'))return;
@@ -2034,6 +2097,7 @@ async function del(key,id,label){
   const o=S[key].find(x=>x.id===id); if(!o)return;
   o.deleted=true; touch(o); save();
   if(document.getElementById('moodBody')) renderMoodBody();
+  else if(document.getElementById('sAnv')) openSettings();   /* 設定シートを開いたまま消したとき */
   toast('削除しました');
 }
 
@@ -2091,15 +2155,18 @@ function evLine(e,showDate){
       ${evEnd(e)!==e.date?`<div class="muted" style="margin-top:2px">📅 ${Number(e.date.slice(5,7))}/${Number(e.date.slice(8))} 〜 ${Number(evEnd(e).slice(5,7))}/${Number(evEnd(e).slice(8))}（${evDays(e)}日間）</div>`:''}
       ${e.memo?`<div class="muted" style="margin-top:2px">${esc(e.memo)}</div>`:''}
       <div class="row" style="gap:5px;margin-top:5px;flex-wrap:wrap"><span class="pill" style="color:${c.c}">${c.l}</span>
-        ${e.virtual?'<span class="pill">🔁 毎月くり返し</span>':editedBy(e)}</div>
+        ${e.virtual?`<span class="pill">🔁 ${e.cat==='payday'?'毎月くり返し':'自動で表示'}</span>`:editedBy(e)}</div>
     </div>
     <div class="iact">${e.virtual
-      ? `<button onclick="openSettings()" title="給料日の設定"><i data-lucide="settings"></i></button>`
+      ? `<button onclick="openSettings()" title="${e.cat==='payday'?'給料日の設定':'記念日の設定'}"><i data-lucide="settings"></i></button>`
       : `<button onclick="evSheet('${e.id}')"><i data-lucide="pencil"></i></button>
          <button onclick="del('events','${e.id}','この予定')"><i data-lucide="trash-2"></i></button>`}</div></div>`;
 }
 function mvCal(n){ const [y,m]=ui.calCur.split('-').map(Number); const d=new Date(y,m-1+n,1);
-  ui.calCur=d.getFullYear()+'-'+pad2(d.getMonth()+1); render(); }
+  ui.calCur=d.getFullYear()+'-'+pad2(d.getMonth()+1);
+  /* 選択日も動かさないと、下の見出しと「＋予定を追加」の初期値が前の月のままになる */
+  ui.calSel=(ui.calCur===todayY().slice(0,7))?todayY():ui.calCur+'-01';
+  render(); }
 function evSheet(id){
   const e=id?live('events').find(x=>x.id===id):null;
   openSheet(`<h3><i data-lucide="calendar-days"></i>${e?'予定を編集':'予定を追加'}</h3>
@@ -2107,7 +2174,7 @@ function evSheet(id){
     <label class="f"><span>日付</span><input class="inp" id="vDate" type="date" value="${e?e.date:(ui.calSel||todayY())}"></label>
     <label class="f"><span>終了日（任意・旅行や連休など、日をまたぐとき）</span>
       <input class="inp" id="vEnd" type="date" value="${e&&e.end?e.end:''}"></label>
-    <label class="f"><span>時刻（任意）</span><input class="inp" id="vTime" type="time" value="${e?e.time:''}"></label>
+    <label class="f"><span>時刻（任意）</span><input class="inp" id="vTime" type="time" value="${esc(e&&e.time?e.time:'')}"></label>
     <label class="f"><span>カテゴリ</span>${seg('ecat',EV_PICK,e?e.cat:'date')}</label>
     <label class="f"><span>メモ（任意）</span><input class="inp" id="vMemo" value="${esc(e?e.memo:'')}"></label>
     <button class="btn" onclick="evSave('${id||''}')"><i data-lucide="check"></i>保存する</button>`);
@@ -2281,8 +2348,10 @@ function rSave(id){
 }
 
 /* ============================ SETTINGS ============================ */
+let setOpenedAt=0;
 function openSettings(){
   const st=S.settings, room=localStorage.getItem(LS_ROOM)||'';
+  setOpenedAt=S.settings.updatedAt||0;   /* 開いている間に相手が変えたか見分けるため */
   const stat={off:'未接続（この端末のみ保存）',wait:'接続中…',on:'接続中 ✅ リアルタイム同期',err:'エラー ⚠️'}[Cloud.status];
   openSheet(`<h3><i data-lucide="settings"></i>設定</h3>
     <label class="f"><span>記念日（付き合った日）</span><input class="inp" id="sAnv" type="date" value="${esc(st.anniversary||'')}"></label>
@@ -2447,6 +2516,11 @@ function anvSave(id){
   setTimeout(openSettings,320);
 }
 function setSave(){
+  /* 開いている間に相手が設定を変えていたら、画面は古いままなので上書きしない */
+  if((S.settings.updatedAt||0)!==setOpenedAt){
+    toast('相手が設定を変更しました。開き直してね');
+    closeSheet(); setTimeout(openSettings,320); return;
+  }
   S.settings=Object.assign({},S.settings,{
     anniversary:val('sAnv'),
     jointInit:Math.max(0,Number(val('sJoint'))||0),
