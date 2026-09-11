@@ -510,7 +510,7 @@ const USERS={
 };
 const LS_DATA='couple_home_data_v1', LS_USER='couple_home_user_v1', LS_CLOUD='couple_home_cloud_v1';
 /* ふたり専用の同期設定（設定済み・触らなくてOK） */
-const APP_VERSION='3.6（2026-09-11）';
+const APP_VERSION='3.6.1（2026-09-11）';
 const SCHEMA=8;   /* データ形式の版。項目を増やしたら +1 する */
 const LS_ROOM='couple_home_room_v1', LS_SAMPLE='couple_home_sample_v1';
 const LS_FEED='couple_home_feed_v1', LS_FEED_SEEN='couple_home_feedseen_v1';
@@ -1644,7 +1644,7 @@ function tlItems(){
   });
   return out.filter(x=>x.date).sort((a,b)=>b.date.localeCompare(a.date)||String(a.title).localeCompare(String(b.title)));
 }
-function timeline(){
+function openTimeline(){
   if(!ui.tlF)ui.tlF='all';
   openSheet('<h3>📖 ふたりの年表</h3><div id="tlBody"></div>'+
     '<button class="btn line" style="width:100%;justify-content:center;margin-top:18px" onclick="closeSheet()">閉じる</button>');
@@ -1655,7 +1655,8 @@ function renderTl(){
   const all=tlItems(), st=S.settings;
   const F=[{v:'all',l:'すべて'},{v:'event',l:'予定'},{v:'wish',l:'叶えたこと'},{v:'mile',l:'記念日'},{v:'mood',l:'いい気分'}];
   if(!F.some(o=>o.v===ui.tlF))ui.tlF='all';
-  const list=(ui.tlF==='all'?all:all.filter(x=>x.kind===ui.tlF)).slice(0,400);
+  const src=ui.tlF==='all'?all:all.filter(x=>x.kind===ui.tlF);
+  const list=src.slice(0,400);
   const days=st.anniversary?Math.floor((new Date(todayY())-pYMD(st.anniversary))/864e5)+1:0;
   const nDate=all.filter(x=>x.kind==='event').length;
   const nWish=all.filter(x=>x.kind==='wish').length;
@@ -1683,7 +1684,7 @@ function renderTl(){
       ふたりの歩みを自動でならべています。新しく入力するものはありません。</div>
     <div class="chips">${chips}</div>
     ${list.length?body:'<div class="empty"><div>📖</div>ここに出せる思い出がまだありません<br><span style="font-size:11px">予定を入れたり、やりたいことを達成すると、ここにたまっていきます</span></div>'}
-    ${all.length>list.length?`<div class="muted" style="text-align:center;font-size:11px;margin-top:12px">新しい方から400件を表示しています</div>`:''}`;
+    ${src.length>list.length?`<div class="muted" style="text-align:center;font-size:11px;margin-top:12px">新しい方から400件を表示しています</div>`:''}`;
   icons();
 }
 /* カレンダーの「デート」「記念日」から、いちばん近い予定を拾う */
@@ -1740,7 +1741,7 @@ function renderHome(){
     ${moodNoticeHTML()}
     <div class="hist-row">
       <button class="hist-btn" onclick="moodHistory()"><i data-lucide="line-chart"></i>気分の記録</button>
-      <button class="hist-btn" onclick="timeline()"><i data-lucide="book-heart"></i>ふたりの年表</button>
+      <button class="hist-btn" onclick="openTimeline()"><i data-lucide="book-heart"></i>ふたりの年表</button>
     </div>
     ${heroHTML()}
     ${feedHTML()}
